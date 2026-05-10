@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LiveNotes — Доска</title>
+  <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+  <div id="app">
+    <header>
+      <span class="logo">Доска</span>
+      <span id="status"></span>
+    </header>
+    <main>
+      <section id="board">
+        <aside class="board-sidebar">
+          <div class="board-sidebar-toolbar">
+            <button id="new-board-btn" title="Создать доску">+ Новая доска</button>
+          </div>
+          <div id="board-list"><div class="hint">Загрузка…</div></div>
+        </aside>
+        <div class="board-content">
+          <div class="board-tools">
+            <button class="board-tool" data-tool="line" title="Линия" aria-label="Линия">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="19" x2="19" y2="5"/></svg>
+            </button>
+            <button class="board-tool" data-tool="rect" title="Прямоугольник" aria-label="Прямоугольник">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="6" width="16" height="12" rx="1"/></svg>
+            </button>
+            <button class="board-tool" data-tool="text" title="Текст" aria-label="Текст">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="6"/><line x1="12" y1="6" x2="12" y2="19"/></svg>
+            </button>
+            <button class="board-tool" data-tool="note" title="Заметка" aria-label="Заметка">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M5 4h11l3 3v13H5z"/><path d="M16 4v3h3"/></svg>
+            </button>
+            <button class="board-tool" data-tool="frame" title="Фрейм" aria-label="Фрейм">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V6a2 2 0 0 1 2-2h3"/><path d="M15 4h3a2 2 0 0 1 2 2v3"/><path d="M20 15v3a2 2 0 0 1-2 2h-3"/><path d="M9 20H6a2 2 0 0 1-2-2v-3"/></svg>
+            </button>
+          </div>
+          <div id="board-canvas" class="board-canvas"></div>
+          <div id="frame-copy-menu" class="frame-copy-menu" style="display:none">
+            <button data-format="html">Ссылка на HTML</button>
+            <button data-format="png">Ссылка на картинку</button>
+          </div>
+          <div id="board-context-menu" class="board-context-menu" style="display:none">
+            <div id="ctx-toolbar-rect" class="ctx-toolbar" style="display:none">
+              <button id="ctx-fill-btn" class="ctx-tool" title="Заливка">
+                <span class="ctx-tool-fill"></span>
+              </button>
+              <button id="ctx-stroke-btn" class="ctx-tool" title="Граница">
+                <span class="ctx-tool-stroke"></span>
+              </button>
+            </div>
+            <div id="ctx-toolbar-text" class="ctx-toolbar" style="display:none">
+              <button id="ctx-color-btn" class="ctx-tool" title="Цвет текста">
+                <span class="ctx-tool-text-color">A<span class="ctx-color-bar"></span></span>
+              </button>
+              <span class="ctx-sep"></span>
+              <button id="ctx-bold-btn" class="ctx-tool" title="Жирный"><span class="ctx-tool-bold">B</span></button>
+              <button id="ctx-italic-btn" class="ctx-tool" title="Курсив"><span class="ctx-tool-italic">I</span></button>
+              <button id="ctx-underline-btn" class="ctx-tool" title="Подчёркивание"><span class="ctx-tool-underline">U</span></button>
+              <span class="ctx-sep"></span>
+              <select id="ctx-size" class="ctx-size-select" title="Размер">
+                <option value="10">10</option>
+                <option value="12">12</option>
+                <option value="14" selected>14</option>
+                <option value="16">16</option>
+                <option value="18">18</option>
+                <option value="20">20</option>
+                <option value="24">24</option>
+                <option value="28">28</option>
+                <option value="32">32</option>
+                <option value="40">40</option>
+                <option value="48">48</option>
+              </select>
+            </div>
+            <div id="ctx-palette" class="ctx-palette" style="display:none">
+              <div id="ctx-opacity-row" class="ctx-opacity-row">
+                <span class="ctx-opacity-label">Opacity</span>
+                <input id="ctx-opacity" class="ctx-opacity-slider" type="range" min="0" max="100" value="100">
+                <span id="ctx-opacity-val" class="ctx-opacity-val">100%</span>
+              </div>
+              <div id="ctx-grid" class="ctx-grid"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
