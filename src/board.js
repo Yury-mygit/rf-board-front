@@ -8,6 +8,12 @@
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 let svg = null;
+// Viewport в мировых координатах: (vx, vy) — левый-верхний угол видимого
+// окна, zoom — увеличение (1 = 1px экрана = 1 единица мира). Координаты
+// элементов в БД трактуются как мировые (без миграции).
+let viewport = { vx: 0, vy: 0, zoom: 1 };
+let panMode = false;  // Space зажат → LMB-drag = pan
+let pan = null;       // активный pan: { startVx, startVy, startClientX, startClientY }
 let getTool = () => null;
 let onToolUsed = () => {};
 let onElementCreated = () => {};
@@ -122,19 +128,165 @@ export function initBoard(container, opts = {}) {
   if (opts.onMoveCommit) onMoveCommit = opts.onMoveCommit;
   if (opts.onResizeCommit) onResizeCommit = opts.onResizeCommit;
   if (opts.onTextCommit) onTextCommit = opts.onTextCommit;
+  if (opts.onViewportChanged) onViewportChanged = opts.onViewportChanged;
 
   container.innerHTML = '';
   svg = document.createElementNS(SVG_NS, 'svg');
   svg.classList.add('board-svg');
+  svg.setAttribute('preserveAspectRatio', 'xMinYMin meet');
   container.appendChild(svg);
 
   handlesG = createHandles();
   svg.appendChild(handlesG);
 
+  applyViewBox();
+  const ro = new ResizeObserver(() => applyViewBox());
+  ro.observe(container);
+
   svg.addEventListener('mousedown', onDown);
   window.addEventListener('mousemove', onMove);
   window.addEventListener('mouseup', onUp);
+  svg.addEventListener('wheel', onWheel, { passive: false });
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('keyup', onKeyUp);
+  // Если Space был отпущен вне страницы, флаг может застрять — сбрасываем по blur.
+  window.addEventListener('blur', () => { if (panMode) { panMode = false; refreshCursor(); } });
 }
+
+function applyViewBox() {
+  if (!svg) return;
+  const rect = svg.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  const vw = rect.width / viewport.zoom;
+  const vh = rect.height / viewport.zoom;
+  svg.setAttribute('viewBox', `${viewport.vx} ${viewport.vy} ${vw} ${vh}`);
+  refreshHandlesIfVisible();
+  onViewportChanged({ ...viewport });
+}
+
+export function getZoom() { return viewport.zoom; }
+export function getViewport() { return { ...viewport }; }
+export function setViewport(v) {
+  if (typeof v.vx === 'number') viewport.vx = v.vx;
+  if (typeof v.vy === 'number') viewport.vy = v.vy;
+  if (typeof v.zoom === 'number') viewport.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, v.zoom));
+  applyViewBox();
+}
+
+export function zoomIn() {
+  if (!svg) return;
+  const r = svg.getBoundingClientRect();
+  setZoomAt(r.left + r.width / 2, r.top + r.height / 2, viewport.zoom * ZOOM_STEP);
+}
+
+export function zoomOut() {
+  if (!svg) return;
+  const r = svg.getBoundingClientRect();
+  setZoomAt(r.left + r.width / 2, r.top + r.height / 2, viewport.zoom / ZOOM_STEP);
+}
+
+// Вписать bbox всех элементов в viewport с 5% padding. Если пусто — сбрасываем
+// в дефолт (0,0, zoom=1).
+export function fitView() {
+  if (!svg) return;
+  const r = svg.getBoundingClientRect();
+  if (!r.width || !r.height) return;
+  if (elements.length === 0) {
+    viewport = { vx: 0, vy: 0, zoom: 1 };
+    applyViewBox();
+    return;
+  }
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const el of elements) {
+    const b = bboxOf(el);
+    if (b.x < minX) minX = b.x;
+    if (b.y < minY) minY = b.y;
+    if (b.x + b.w > maxX) maxX = b.x + b.w;
+    if (b.y + b.h > maxY) maxY = b.y + b.h;
+  }
+  const bboxW = Math.max(1, maxX - minX);
+  const bboxH = Math.max(1, maxY - minY);
+  const pad = 0.05;
+  const z = Math.min(r.width / (bboxW * (1 + 2 * pad)), r.height / (bboxH * (1 + 2 * pad)));
+  viewport.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+  // Центрируем bbox в viewport.
+  viewport.vx = minX - (r.width / viewport.zoom - bboxW) / 2;
+  viewport.vy = minY - (r.height / viewport.zoom - bboxH) / 2;
+  applyViewBox();
+}
+
+function screenToWorld(clientX, clientY) {
+  const r = svg.getBoundingClientRect();
+  return {
+    x: viewport.vx + (clientX - r.left) / viewport.zoom,
+    y: viewport.vy + (clientY - r.top) / viewport.zoom,
+  };
+}
+
+function refreshCursor() {
+  if (!svg) return;
+  if (pan) svg.style.cursor = 'grabbing';
+  else if (panMode) svg.style.cursor = 'grab';
+  else svg.style.cursor = getTool() ? 'crosshair' : 'default';
+}
+
+function startPan(clientX, clientY) {
+  pan = {
+    startVx: viewport.vx,
+    startVy: viewport.vy,
+    startClientX: clientX,
+    startClientY: clientY,
+  };
+  refreshCursor();
+}
+
+const ZOOM_MIN = 0.1;
+const ZOOM_MAX = 4;
+const ZOOM_STEP = 1.2;
+let onViewportChanged = () => {};
+
+// Wheel: Ctrl+wheel (или pinch-зум на трекпаде, который браузер шлёт как
+// wheel с ctrlKey=true) → zoom вокруг курсора. Иначе → pan (deltaX/deltaY).
+function onWheel(e) {
+  e.preventDefault();
+  if (e.ctrlKey) {
+    setZoomAt(e.clientX, e.clientY, viewport.zoom * Math.exp(-e.deltaY / 500));
+    return;
+  }
+  viewport.vx += e.deltaX / viewport.zoom;
+  viewport.vy += e.deltaY / viewport.zoom;
+  applyViewBox();
+}
+
+// Установить zoom так, чтобы точка под (clientX, clientY) осталась на месте.
+function setZoomAt(clientX, clientY, targetZoom) {
+  const newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, targetZoom));
+  if (newZoom === viewport.zoom) return;
+  const before = screenToWorld(clientX, clientY);
+  viewport.zoom = newZoom;
+  const after = screenToWorld(clientX, clientY);
+  viewport.vx += before.x - after.x;
+  viewport.vy += before.y - after.y;
+  applyViewBox();
+}
+
+function onKeyDown(e) {
+  if (e.code !== 'Space' || panMode) return;
+  const ae = document.activeElement;
+  // Не активируем pan если фокус в поле ввода — там Space печатает пробел.
+  if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
+  e.preventDefault();
+  panMode = true;
+  refreshCursor();
+}
+
+function onKeyUp(e) {
+  if (e.code !== 'Space' || !panMode) return;
+  panMode = false;
+  refreshCursor();
+}
+
+function handleSize() { return HANDLE_SIZE / viewport.zoom; }
 
 function createHandles() {
   const g = document.createElementNS(SVG_NS, 'g');
@@ -144,8 +296,6 @@ function createHandles() {
     const r = document.createElementNS(SVG_NS, 'rect');
     r.classList.add('resize-handle');
     r.dataset.handle = name;
-    r.setAttribute('width', HANDLE_SIZE);
-    r.setAttribute('height', HANDLE_SIZE);
     g.appendChild(r);
   }
   return g;
@@ -173,15 +323,24 @@ function updateHandles(frame) {
     sw: [b.x,           b.y + b.h],
     w:  [b.x,           b.y + b.h / 2],
   };
+  const hs = handleSize();
   for (const r of handlesG.querySelectorAll('.resize-handle')) {
     const [x, y] = positions[r.dataset.handle];
-    r.setAttribute('x', x - HANDLE_SIZE / 2);
-    r.setAttribute('y', y - HANDLE_SIZE / 2);
+    r.setAttribute('width', hs);
+    r.setAttribute('height', hs);
+    r.setAttribute('x', x - hs / 2);
+    r.setAttribute('y', y - hs / 2);
   }
 }
 
+function refreshHandlesIfVisible() {
+  if (!handlesG || handlesG.style.display === 'none') return;
+  const sel = getOnlySelected();
+  if (sel && (sel.type === 'frame' || sel.type === 'rect')) updateHandles(sel);
+}
+
 export function setBoardCursor(tool) {
-  if (svg) svg.style.cursor = tool ? 'crosshair' : 'default';
+  refreshCursor();
 }
 
 export function clearBoard() {
@@ -250,8 +409,7 @@ function renderFromApi(e) {
 }
 
 function point(e) {
-  const r = svg.getBoundingClientRect();
-  return { x: e.clientX - r.left, y: e.clientY - r.top };
+  return screenToWorld(e.clientX, e.clientY);
 }
 
 function findShape(target) {
@@ -342,6 +500,13 @@ function childrenOf(parentId) {
 // ── Mouse handlers ───────────────────────────────────────────────────────────
 
 function onDown(e) {
+  // Pan: middle-mouse либо Space+LMB. Имеет приоритет над всем (включая tool).
+  if (e.button === 1 || (panMode && e.button === 0)) {
+    e.preventDefault();
+    startPan(e.clientX, e.clientY);
+    return;
+  }
+
   const tool = getTool();
   const p = point(e);
 
@@ -423,6 +588,12 @@ function onDown(e) {
 }
 
 function onMove(e) {
+  if (pan) {
+    viewport.vx = pan.startVx - (e.clientX - pan.startClientX) / viewport.zoom;
+    viewport.vy = pan.startVy - (e.clientY - pan.startClientY) / viewport.zoom;
+    applyViewBox();
+    return;
+  }
   const p = point(e);
   if (rubber) {
     if (!rubber.node) {
@@ -517,6 +688,11 @@ function onMove(e) {
 }
 
 function onUp(e) {
+  if (pan) {
+    pan = null;
+    refreshCursor();
+    return;
+  }
   if (rubber) {
     const p = point(e);
     const dx = Math.abs(p.x - rubber.startX);

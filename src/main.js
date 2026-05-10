@@ -1,4 +1,4 @@
-import { initBoard, setBoardCursor, loadBoard, clearBoard, applyElementAttrs, deselect as boardDeselect, removeElements as boardRemoveElements, exitEdit as boardExitEdit, getAllSelected as boardGetAllSelected, getSelectedCount as boardGetSelectedCount, addFromApi as boardAddFromApi, setElementGeo as boardSetElementGeo, setElementParent as boardSetElementParent, getElementById as boardGetElementById } from './board.js';
+import { initBoard, setBoardCursor, loadBoard, clearBoard, applyElementAttrs, deselect as boardDeselect, removeElements as boardRemoveElements, exitEdit as boardExitEdit, getAllSelected as boardGetAllSelected, getSelectedCount as boardGetSelectedCount, addFromApi as boardAddFromApi, setElementGeo as boardSetElementGeo, setElementParent as boardSetElementParent, getElementById as boardGetElementById, zoomIn as boardZoomIn, zoomOut as boardZoomOut, fitView as boardFitView, setViewport as boardSetViewport } from './board.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -641,6 +641,7 @@ async function loadBoards() {
       renderBoardsList();
       const full = await api.board(first.id);
       loadBoard(full.elements || []);
+      if (!restoreViewport(first.id)) boardFitView();
       clearUndo();
     }
   } catch (e) {
@@ -671,6 +672,7 @@ async function openBoard(id) {
   try {
     const full = await api.board(id);
     loadBoard(full.elements || []);
+    if (!restoreViewport(id)) boardFitView();
     clearUndo();
   } catch (e) {
     setStatus(`Ошибка загрузки доски: ${e.message}`, true);
@@ -702,6 +704,29 @@ document.querySelectorAll('.board-tool').forEach(el => {
 
 document.getElementById('new-board-btn').addEventListener('click', () => createBoard());
 
+const zoomIndicator = document.getElementById('zoom-indicator');
+const VIEWPORT_KEY = id => `board:viewport:${id}`;
+let saveViewportTimer = null;
+function saveViewportSoon(viewport) {
+  if (!currentBoardId) return;
+  clearTimeout(saveViewportTimer);
+  saveViewportTimer = setTimeout(() => {
+    try { localStorage.setItem(VIEWPORT_KEY(currentBoardId), JSON.stringify(viewport)); } catch {}
+  }, 300);
+}
+function restoreViewport(boardId) {
+  try {
+    const raw = localStorage.getItem(VIEWPORT_KEY(boardId));
+    if (!raw) return false;
+    const v = JSON.parse(raw);
+    if (typeof v.vx === 'number' && typeof v.vy === 'number' && typeof v.zoom === 'number') {
+      boardSetViewport(v);
+      return true;
+    }
+  } catch {}
+  return false;
+}
+
 initBoard(document.getElementById('board-canvas'), {
   getTool: () => boardTool,
   onToolUsed: clearBoardTool,
@@ -716,7 +741,15 @@ initBoard(document.getElementById('board-canvas'), {
     before: { [key]: before },
     after: { [key]: after },
   }),
+  onViewportChanged: viewport => {
+    if (zoomIndicator) zoomIndicator.textContent = Math.round(viewport.zoom * 100) + '%';
+    saveViewportSoon(viewport);
+  },
 });
+
+document.getElementById('zoom-in-btn').addEventListener('click', boardZoomIn);
+document.getElementById('zoom-out-btn').addEventListener('click', boardZoomOut);
+document.getElementById('zoom-fit-btn').addEventListener('click', boardFitView);
 
 buildContextMenu();
 

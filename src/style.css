@@ -539,6 +539,52 @@ body.board-on #board { display: flex; }
 .board-shape {
   cursor: move;
 }
+/* Не масштабировать stroke вместе с зумом — линии и обводки остаются screen-px. */
+.board-svg .board-shape,
+.board-svg .board-rubber,
+.board-svg .resize-handle {
+  vector-effect: non-scaling-stroke;
+}
+
+/* Zoom-controls в углу canvas-области. */
+.board-zoom-ctl {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  background: rgba(28, 31, 37, 0.9);
+  border: 1px solid var(--border, #23262d);
+  border-radius: 8px;
+  z-index: 5;
+  user-select: none;
+}
+.board-zoom-ctl button {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  color: var(--fg, #e7e9ee);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  font-family: inherit;
+  padding: 0;
+}
+.board-zoom-ctl button:hover { background: rgba(255,255,255,0.06); border-color: var(--border, #23262d); }
+.board-zoom-ctl button:active { transform: scale(0.94); }
+.board-zoom-ctl #zoom-indicator {
+  min-width: 44px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted, #8b93a3);
+  padding: 0 4px;
+}
 .board-svg[style*="crosshair"] .board-shape {
   cursor: crosshair;
 }
