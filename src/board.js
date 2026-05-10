@@ -223,6 +223,17 @@ function screenToWorld(clientX, clientY) {
   };
 }
 
+// Обратная конверсия для DOM-overlays (контекст-меню и т.п.).
+// Возвращает client-координаты (как clientX/clientY).
+export function worldToScreen(wx, wy) {
+  if (!svg) return { x: 0, y: 0 };
+  const r = svg.getBoundingClientRect();
+  return {
+    x: r.left + (wx - viewport.vx) * viewport.zoom,
+    y: r.top + (wy - viewport.vy) * viewport.zoom,
+  };
+}
+
 function refreshCursor() {
   if (!svg) return;
   if (pan) svg.style.cursor = 'grabbing';
@@ -436,6 +447,8 @@ function enterEdit(rec) {
   }
 }
 
+export function isEditing() { return editing !== null; }
+
 export function exitEdit() {
   if (!editing) return;
   const input = editing.node.querySelector('input, textarea');
@@ -500,6 +513,11 @@ function childrenOf(parentId) {
 // ── Mouse handlers ───────────────────────────────────────────────────────────
 
 function onDown(e) {
+  // Если board открыт в iframe (например, через /tools/), click на SVG не передаёт
+  // фокус iframe element (SVG не focusable). Без фокуса keydown идут к parent.
+  // window.focus() внутри iframe — same-origin, всегда работает; parent видит iframe как activeElement.
+  window.focus();
+
   // Pan: middle-mouse либо Space+LMB. Имеет приоритет над всем (включая tool).
   if (e.button === 1 || (panMode && e.button === 0)) {
     e.preventDefault();
@@ -514,6 +532,13 @@ function onDown(e) {
   if (editing) {
     const editingInput = editing.node.querySelector('input, textarea');
     if (!editingInput || !editingInput.contains(e.target)) exitEdit();
+  }
+
+  // Если фокус «застрял» в каком-то input/textarea (например, frame title),
+  // снимаем — иначе Delete на клавиатуре печатает в инпут вместо удаления элемента.
+  const ae = document.activeElement;
+  if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA') && ae !== e.target && !ae.contains(e.target)) {
+    ae.blur();
   }
 
   // Handle resize-handle первым: имеет приоритет над shape-кликом.

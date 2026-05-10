@@ -1,4 +1,4 @@
-import { initBoard, setBoardCursor, loadBoard, clearBoard, applyElementAttrs, deselect as boardDeselect, removeElements as boardRemoveElements, exitEdit as boardExitEdit, getAllSelected as boardGetAllSelected, getSelectedCount as boardGetSelectedCount, addFromApi as boardAddFromApi, setElementGeo as boardSetElementGeo, setElementParent as boardSetElementParent, getElementById as boardGetElementById, zoomIn as boardZoomIn, zoomOut as boardZoomOut, fitView as boardFitView, setViewport as boardSetViewport } from './board.js';
+import { initBoard, setBoardCursor, loadBoard, clearBoard, applyElementAttrs, deselect as boardDeselect, removeElements as boardRemoveElements, exitEdit as boardExitEdit, getAllSelected as boardGetAllSelected, getSelectedCount as boardGetSelectedCount, addFromApi as boardAddFromApi, setElementGeo as boardSetElementGeo, setElementParent as boardSetElementParent, getElementById as boardGetElementById, zoomIn as boardZoomIn, zoomOut as boardZoomOut, fitView as boardFitView, setViewport as boardSetViewport, worldToScreen as boardWorldToScreen, isEditing as boardIsEditing } from './board.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -312,18 +312,26 @@ function hideContextMenu() {
 
 function positionContextMenu(bbox) {
   const menu = document.getElementById('board-context-menu');
+  const content = document.querySelector('.board-content');
+  if (!content) return;
+  const cR = content.getBoundingClientRect();
+  // bbox в world-координатах — конвертируем в screen для DOM-overlay.
+  const tl = boardWorldToScreen(bbox.x, bbox.y);
+  const bl = boardWorldToScreen(bbox.x, bbox.y + bbox.h);
   const padding = 8;
   const TOOLBAR_H = 46;
-  let top = bbox.y - TOOLBAR_H - padding;
-  if (top < 4) top = bbox.y + bbox.h + padding;
-  menu.style.left = bbox.x + 'px';
-  menu.style.top = top + 'px';
+  let topClient = tl.y - TOOLBAR_H - padding;
+  if (topClient - cR.top < 4) topClient = bl.y + padding;
+  menu.style.left = (tl.x - cR.left) + 'px';
+  menu.style.top  = (topClient - cR.top) + 'px';
 }
 
 let boardSelected = null;
+let lastSelectedBbox = null;
 
 function onBoardSelectionChanged(rec, bbox) {
   boardSelected = rec;
+  lastSelectedBbox = bbox || null;
   if (!rec) hideContextMenu();
   else showContextMenu(rec, bbox);
 }
@@ -506,26 +514,37 @@ function commitAttrChange(rec, before, after) {
 
 function onBoardKeydown(e) {
   const target = e.target;
-  const isEditing = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement;
+  const isInputTarget = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement;
+  // Явный edit-mode (двойной клик в text/note) — Delete и Ctrl+Z работают как
+  // обычное редактирование. Иначе — операции относятся к доске, даже если
+  // фокус случайно остался в каком-то input (например, в title фрейма).
+  const inBoardEdit = boardIsEditing();
 
   const mod = e.ctrlKey || e.metaKey;
-  if (mod && !isEditing) {
+  if (mod && !inBoardEdit) {
     const k = e.key.toLowerCase();
     if (k === 'z' && !e.shiftKey) {
       e.preventDefault();
+      if (isInputTarget) target.blur();
       undoBoard();
       return;
     }
     if ((k === 'z' && e.shiftKey) || k === 'y') {
       e.preventDefault();
+      if (isInputTarget) target.blur();
       redoBoard();
       return;
     }
   }
 
   if (e.key === 'Escape') {
-    if (isEditing) {
+    if (inBoardEdit) {
       boardExitEdit();
+      e.preventDefault();
+      return;
+    }
+    if (isInputTarget) {
+      target.blur();
       e.preventDefault();
       return;
     }
@@ -542,9 +561,10 @@ function onBoardKeydown(e) {
   }
 
   if (e.key === 'Delete' || e.key === 'Backspace') {
-    if (isEditing) return;
+    if (inBoardEdit) return; // редактирование text/note — Delete печатает
     if (boardGetSelectedCount() === 0) return;
     e.preventDefault();
+    if (isInputTarget) target.blur();
     deleteBoardSelected();
   }
 }
@@ -744,6 +764,11 @@ initBoard(document.getElementById('board-canvas'), {
   onViewportChanged: viewport => {
     if (zoomIndicator) zoomIndicator.textContent = Math.round(viewport.zoom * 100) + '%';
     saveViewportSoon(viewport);
+    // Контекст-меню — DOM-overlay в screen-coords, при pan/zoom надо репозиционировать.
+    const menu = document.getElementById('board-context-menu');
+    if (boardSelected && lastSelectedBbox && menu && menu.style.display !== 'none') {
+      positionContextMenu(lastSelectedBbox);
+    }
   },
 });
 
@@ -754,6 +779,20 @@ document.getElementById('zoom-fit-btn').addEventListener('click', boardFitView);
 buildContextMenu();
 
 document.addEventListener('keydown', onBoardKeydown);
+// Дублируем на window (capture) — на случай когда фокус ушёл к parent (iframe-сценарий из /tools/).
+window.addEventListener('keydown', onBoardKeydown, true);
+// Если board открыт в iframe из /tools/ и фокус остался у parent — parent шлёт нам
+// keydown через postMessage. Реконструируем event-like объект и вызываем handler.
+window.addEventListener('message', e => {
+  const d = e.data;
+  if (!d || !d.__toolsKey) return;
+  onBoardKeydown({
+    key: d.key, code: d.code,
+    ctrlKey: !!d.ctrlKey, shiftKey: !!d.shiftKey, metaKey: !!d.metaKey, altKey: !!d.altKey,
+    target: document.body,
+    preventDefault: () => {},
+  });
+});
 
 document.body.classList.add('board-on');
 
