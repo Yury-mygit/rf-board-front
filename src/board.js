@@ -524,6 +524,19 @@ function renderFromApi(e) {
     const rec = placeNote(e.x, e.y, { id: e.id, w: e.w, h: e.h, text: attrs.text || '', focus: false, parentId });
     rec.attrs = attrs;
     applyElementAttrs(rec);
+    return;
+  }
+  if (e.type === 'image') {
+    const node = document.createElementNS(SVG_NS, 'image');
+    node.classList.add('board-shape');
+    node.dataset.type = 'image';
+    node.setAttribute('x', e.x);
+    node.setAttribute('y', e.y);
+    node.setAttribute('width', e.w);
+    node.setAttribute('height', e.h);
+    svg.appendChild(node);
+    const rec = register({ id: e.id, type: 'image', node, x: e.x, y: e.y, w: e.w, h: e.h, attrs, parentId });
+    applyElementAttrs(rec);
   }
 }
 
@@ -1021,6 +1034,15 @@ export function applyElementAttrs(rec) {
     const desiredTitle = a.title == null ? '' : a.title;
     if (input.value !== desiredTitle) input.value = desiredTitle;
     resizeFrameTitleWidth(rec);
+    return;
+  }
+  if (rec.type === 'image') {
+    if (a.src !== undefined) rec.node.setAttribute('href', a.src || '');
+    const fit = a.fit || 'cover';
+    const par = fit === 'contain' ? 'xMidYMid meet'
+              : fit === 'fill' ? 'none'
+              : 'xMidYMid slice';
+    rec.node.setAttribute('preserveAspectRatio', par);
   }
 }
 
@@ -1145,7 +1167,7 @@ function moveBy(el, dx, dy) {
     return;
   }
   el.x += dx; el.y += dy;
-  if (el.type === 'rect') {
+  if (el.type === 'rect' || el.type === 'image') {
     el.node.setAttribute('x', el.x);
     el.node.setAttribute('y', el.y);
     return;
