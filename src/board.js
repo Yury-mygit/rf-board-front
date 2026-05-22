@@ -1002,10 +1002,17 @@ export function applyElementAttrs(rec) {
     return;
   }
   if (rec.type === 'note') {
+    const bg = rec.node.querySelector('rect.board-note-bg');
     const ta = rec.node.querySelector('textarea.board-note-textarea');
-    if (!ta) return;
+    if (!ta || !bg) return;
     const desiredText = a.text == null ? '' : a.text;
     if (ta.value !== desiredText) ta.value = desiredText;
+    if (a.fill !== undefined) bg.setAttribute('fill', a.fill === null ? 'none' : a.fill);
+    if (a.stroke !== undefined) bg.setAttribute('stroke', a.stroke === null ? 'none' : a.stroke);
+    if (a.rx !== undefined) bg.setAttribute('rx', a.rx);
+    if (a.strokeWidth !== undefined) bg.setAttribute('stroke-width', a.strokeWidth);
+    if (a.color !== undefined) ta.style.color = a.color === null ? '' : a.color;
+    if (a.fontSize !== undefined) ta.style.fontSize = a.fontSize + 'px';
     return;
   }
   if (rec.type === 'frame') {
