@@ -157,6 +157,10 @@ export function initBoard(container, opts = {}) {
   window.addEventListener('mousemove', onMove);
   window.addEventListener('mouseup', onUp);
   svg.addEventListener('wheel', onWheel, { passive: false });
+  svg.addEventListener('touchstart', onTouchStart, { passive: false });
+  svg.addEventListener('touchmove', onTouchMove, { passive: false });
+  svg.addEventListener('touchend', onTouchEnd);
+  svg.addEventListener('touchcancel', onTouchEnd);
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('keyup', onKeyUp);
   // Если Space был отпущен вне страницы, флаг может застрять — сбрасываем по blur.
@@ -320,6 +324,54 @@ function onWheel(e) {
   viewport.vx += e.deltaX / viewport.zoom;
   viewport.vy += e.deltaY / viewport.zoom;
   applyViewBox();
+}
+
+// Два пальца на тач-экране: pan по центру + pinch-zoom. Точка под начальным
+// центром остаётся под текущим центром, расстояние между пальцами регулирует zoom.
+let touchGesture = null;
+
+function touchCenter(touches) {
+  return [(touches[0].clientX + touches[1].clientX) / 2, (touches[0].clientY + touches[1].clientY) / 2];
+}
+function touchDist(touches) {
+  return Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+}
+function cancelMouseInteractions() {
+  if (drag && drag.node) drag.node.remove();
+  if (rubber && rubber.node) rubber.node.remove();
+  drag = rubber = move = resize = pan = null;
+  setFrameTarget(null);
+  refreshCursor();
+}
+function onTouchStart(e) {
+  if (e.touches.length < 2) return;
+  e.preventDefault();
+  cancelMouseInteractions();
+  const [cx, cy] = touchCenter(e.touches);
+  const anchor = screenToWorld(cx, cy);
+  touchGesture = {
+    startZoom: viewport.zoom,
+    startDist: touchDist(e.touches) || 1,
+    anchorWx: anchor.x,
+    anchorWy: anchor.y,
+  };
+}
+function onTouchMove(e) {
+  if (!touchGesture || e.touches.length < 2) return;
+  e.preventDefault();
+  const [cx, cy] = touchCenter(e.touches);
+  const scale = touchDist(e.touches) / touchGesture.startDist;
+  const newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, touchGesture.startZoom * scale));
+  viewport.zoom = newZoom;
+  const rect = svg.getBoundingClientRect();
+  viewport.vx = touchGesture.anchorWx - (cx - rect.left) / newZoom;
+  viewport.vy = touchGesture.anchorWy - (cy - rect.top) / newZoom;
+  applyViewBox();
+}
+function onTouchEnd(e) {
+  if (!touchGesture) return;
+  if (e.touches.length >= 2) return;
+  touchGesture = null;
 }
 
 // Установить zoom так, чтобы точка под (clientX, clientY) осталась на месте.
@@ -932,6 +984,8 @@ export function applyElementAttrs(rec) {
     if (a.stroke !== undefined) rec.node.setAttribute('stroke', a.stroke === null ? 'none' : a.stroke);
     if (a.fillOpacity !== undefined) rec.node.setAttribute('fill-opacity', a.fillOpacity);
     if (a.strokeOpacity !== undefined) rec.node.setAttribute('stroke-opacity', a.strokeOpacity);
+    if (a.rx !== undefined) rec.node.setAttribute('rx', a.rx);
+    if (a.strokeWidth !== undefined) rec.node.setAttribute('stroke-width', a.strokeWidth);
     return;
   }
   if (rec.type === 'text') {

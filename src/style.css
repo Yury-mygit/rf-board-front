@@ -162,6 +162,7 @@ body.board-on #board { display: flex; }
   background: #fefefe;
   cursor: default;
   user-select: none;
+  touch-action: none;
 }
 .board-grid-bg { pointer-events: none; }
 
@@ -554,4 +555,50 @@ body.board-on #board { display: flex; }
   border-color: var(--accent);
 }
 .board-tool svg { display: block; width: 18px; height: 18px; }
+
+/* ── Sidebar toggle (mobile drawer) ── */
+.board-sidebar-toggle {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: 36px;
+  height: 36px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.08);
+  color: var(--text);
+  cursor: pointer;
+  z-index: 3;
+}
+.board-sidebar-toggle svg { display: block; width: 20px; height: 20px; }
+.board-sidebar-backdrop {
+  display: none;
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,.35);
+  z-index: 6;
+}
+body.board-sidebar-open .board-sidebar-backdrop { display: block; }
+
+@media (max-width: 768px) {
+  .board-sidebar-toggle { display: flex; }
+  .board-tools { left: 52px; }
+  .board-sidebar {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 240px;
+    max-width: 80vw;
+    z-index: 7;
+    transform: translateX(-100%);
+    transition: transform .2s ease;
+    box-shadow: 2px 0 8px rgba(0,0,0,.12);
+  }
+  body.board-sidebar-open .board-sidebar { transform: translateX(0); }
+}
 

@@ -680,7 +680,7 @@ function renderBoardsList() {
     const item = document.createElement('div');
     item.className = 'board-item' + (b.id === currentBoardId ? ' active' : '');
     item.textContent = b.title || 'Без названия';
-    item.addEventListener('click', () => openBoard(b.id));
+    item.addEventListener('click', () => { openBoard(b.id); closeSidebar(); });
     list.appendChild(item);
   }
 }
@@ -722,7 +722,13 @@ document.querySelectorAll('.board-tool').forEach(el => {
   el.addEventListener('click', () => setBoardTool(el.dataset.tool));
 });
 
-document.getElementById('new-board-btn').addEventListener('click', () => createBoard());
+document.getElementById('new-board-btn').addEventListener('click', () => { createBoard(); closeSidebar(); });
+
+function isMobile() { return window.matchMedia('(max-width: 768px)').matches; }
+function closeSidebar() { document.body.classList.remove('board-sidebar-open'); }
+function toggleSidebar() { document.body.classList.toggle('board-sidebar-open'); }
+document.getElementById('board-sidebar-toggle').addEventListener('click', toggleSidebar);
+document.getElementById('board-sidebar-backdrop').addEventListener('click', closeSidebar);
 
 const zoomIndicator = document.getElementById('zoom-indicator');
 const VIEWPORT_KEY = id => `board:viewport:${id}`;
