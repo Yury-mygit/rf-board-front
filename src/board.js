@@ -32,6 +32,14 @@ let selectedIds = new Set(); // id'ы выбранных элементов
 let editing = null;  // text/note в режиме редактирования (input доступен)
 let frameTarget = null; // фрейм-цель при drag (для подсветки)
 let handlesG = null; // <g> с 8 resize-handles, всегда поверх
+let gridBgRect = null; // фоновый rect под всеми элементами с fill=url(#board-grid)
+let gridPattern = null; // <pattern>, шаг пересчитывается в applyViewBox
+let gridLine = null;    // <path> внутри pattern: две линии (верх и лево ячейки)
+
+const GRID_BASE_STEP = 50;     // world-units на zoom=1
+const GRID_MIN_SCREEN_PX = 18; // ниже — шаг ×5 (более крупная LOD)
+const GRID_MAX_SCREEN_PX = 90; // выше — шаг ÷5 (более мелкая LOD)
+const GRID_STROKE_SCREEN_PX = 1; // толщина линий в screen-px
 
 function getOnlySelected() {
   if (selectedIds.size !== 1) return null;
@@ -136,6 +144,8 @@ export function initBoard(container, opts = {}) {
   svg.setAttribute('preserveAspectRatio', 'xMinYMin meet');
   container.appendChild(svg);
 
+  installGridBackground();
+
   handlesG = createHandles();
   svg.appendChild(handlesG);
 
@@ -160,8 +170,51 @@ function applyViewBox() {
   const vw = rect.width / viewport.zoom;
   const vh = rect.height / viewport.zoom;
   svg.setAttribute('viewBox', `${viewport.vx} ${viewport.vy} ${vw} ${vh}`);
+  updateGridForViewport(vw, vh);
   refreshHandlesIfVisible();
   onViewportChanged({ ...viewport });
+}
+
+// Фон-сетка как в Miro: точечный pattern, шаг переключается на ×5/÷5 при пересечении
+// порогов screen-px, чтобы ячейки не сливались на zoom-out и не разъезжались на zoom-in.
+function installGridBackground() {
+  const defs = document.createElementNS(SVG_NS, 'defs');
+  gridPattern = document.createElementNS(SVG_NS, 'pattern');
+  gridPattern.setAttribute('id', 'board-grid');
+  gridPattern.setAttribute('patternUnits', 'userSpaceOnUse');
+  gridPattern.setAttribute('x', '0');
+  gridPattern.setAttribute('y', '0');
+  gridLine = document.createElementNS(SVG_NS, 'path');
+  gridLine.setAttribute('fill', 'none');
+  gridLine.setAttribute('stroke', '#dfe2e7');
+  gridPattern.appendChild(gridLine);
+  defs.appendChild(gridPattern);
+  svg.appendChild(defs);
+
+  gridBgRect = document.createElementNS(SVG_NS, 'rect');
+  gridBgRect.classList.add('board-grid-bg');
+  gridBgRect.setAttribute('fill', 'url(#board-grid)');
+  svg.appendChild(gridBgRect);
+}
+
+function updateGridForViewport(vw, vh) {
+  if (!gridBgRect || !gridPattern || !gridLine) return;
+  let step = GRID_BASE_STEP;
+  while (step * viewport.zoom < GRID_MIN_SCREEN_PX) step *= 5;
+  while (step * viewport.zoom > GRID_MAX_SCREEN_PX) step /= 5;
+  gridPattern.setAttribute('width', step);
+  gridPattern.setAttribute('height', step);
+  gridLine.setAttribute('d', `M 0 0 H ${step} M 0 0 V ${step}`);
+  gridLine.setAttribute('stroke-width', GRID_STROKE_SCREEN_PX / viewport.zoom);
+  // BG rect — на 1 шаг шире viewport по краям, чтобы при субпиксельных дрожаниях pan
+  // не было видно границы прямоугольника. Округление вниз до сетки — точки не "плывут".
+  const padX = step, padY = step;
+  const bx = Math.floor((viewport.vx - padX) / step) * step;
+  const by = Math.floor((viewport.vy - padY) / step) * step;
+  gridBgRect.setAttribute('x', bx);
+  gridBgRect.setAttribute('y', by);
+  gridBgRect.setAttribute('width', vw + padX * 4);
+  gridBgRect.setAttribute('height', vh + padY * 4);
 }
 
 export function getZoom() { return viewport.zoom; }
@@ -356,7 +409,10 @@ export function setBoardCursor(tool) {
 
 export function clearBoard() {
   if (!svg) return;
-  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  // Удаляем только элементы досок (data-id), не трогаем defs/bg-grid/handles.
+  for (const node of [...svg.querySelectorAll('[data-id]')]) {
+    node.remove();
+  }
   if (handlesG) {
     hideHandles();
     svg.appendChild(handlesG);
