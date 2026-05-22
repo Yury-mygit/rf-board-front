@@ -452,7 +452,7 @@ function updateHandles(frame) {
 function refreshHandlesIfVisible() {
   if (!handlesG || handlesG.style.display === 'none') return;
   const sel = getOnlySelected();
-  if (sel && (sel.type === 'frame' || sel.type === 'rect')) updateHandles(sel);
+  if (sel && (sel.type === 'frame' || sel.type === 'rect' || sel.type === 'image')) updateHandles(sel);
 }
 
 export function setBoardCursor(tool) {
@@ -553,7 +553,7 @@ function findShape(target) {
 
 function canMove(el) {
   return el.type === 'line' || el.type === 'rect' || el.type === 'frame'
-      || el.type === 'text' || el.type === 'note';
+      || el.type === 'text' || el.type === 'note' || el.type === 'image';
 }
 
 function enterEdit(rec) {
@@ -666,7 +666,7 @@ function onDown(e) {
   // Handle resize-handle первым: имеет приоритет над shape-кликом.
   const handleEl = e.target.closest('.resize-handle');
   const onlySel = getOnlySelected();
-  if (handleEl && onlySel && (onlySel.type === 'frame' || onlySel.type === 'rect')) {
+  if (handleEl && onlySel && (onlySel.type === 'frame' || onlySel.type === 'rect' || onlySel.type === 'image')) {
     const b = bboxOf(onlySel);
     resize = {
       el: onlySel,
@@ -687,6 +687,7 @@ function onDown(e) {
     if (e.target.closest('input, textarea')) return;
     if (tool === 'text') { placeText(p.x, p.y); onToolUsed(); e.preventDefault(); return; }
     if (tool === 'note') { placeNote(p.x, p.y); onToolUsed(); e.preventDefault(); return; }
+    if (tool === 'image') { promptAndPlaceImage(p.x, p.y); onToolUsed(); e.preventDefault(); return; }
     drag = { type: tool, x1: p.x, y1: p.y, node: null };
     e.preventDefault();
     return;
@@ -828,7 +829,7 @@ function onMove(e) {
       }
     }
     if (getOnlySelected() === move.el) {
-      if (move.el.type === 'frame' || move.el.type === 'rect') updateHandles(move.el);
+      if (move.el.type === 'frame' || move.el.type === 'rect' || move.el.type === 'image') updateHandles(move.el);
       onSelectionChanged(move.el, bboxOf(move.el));
     }
   }
@@ -1231,7 +1232,7 @@ export function deselect() {
 function notifySelectionChanged() {
   if (selectedIds.size === 1) {
     const only = getOnlySelected();
-    if (only.type === 'frame' || only.type === 'rect') showHandlesFor(only);
+    if (only.type === 'frame' || only.type === 'rect' || only.type === 'image') showHandlesFor(only);
     else hideHandles();
     onSelectionChanged(only, bboxOf(only));
   } else {
@@ -1279,7 +1280,7 @@ function applyGeo(rec) {
     rec.node.setAttribute('y2', rec.y2);
     return;
   }
-  if (rec.type === 'rect' || rec.type === 'frame') {
+  if (rec.type === 'rect' || rec.type === 'frame' || rec.type === 'image') {
     setRectAttrs(rec.node, rec.x, rec.y, rec.w, rec.h);
     return;
   }
@@ -1326,7 +1327,7 @@ export function setElementGeo(id, geo) {
   applyGeo(rec);
   if (rec.type === 'text') resizeTextWidth(rec);
   if (getOnlySelected() === rec) {
-    if (rec.type === 'frame' || rec.type === 'rect') updateHandles(rec);
+    if (rec.type === 'frame' || rec.type === 'rect' || rec.type === 'image') updateHandles(rec);
     onSelectionChanged(rec, bboxOf(rec));
   }
 }
@@ -1450,6 +1451,32 @@ function placeText(x, y, opts = {}) {
     onElementCreated(rec);
     enterEdit(rec);
   }
+  return rec;
+}
+
+function promptAndPlaceImage(x, y) {
+  const url = window.prompt('URL картинки (https://…):');
+  if (!url) return null;
+  const W = 200, H = 150;
+  const node = document.createElementNS(SVG_NS, 'image');
+  node.setAttribute('x', x);
+  node.setAttribute('y', y);
+  node.setAttribute('width', W);
+  node.setAttribute('height', H);
+  node.setAttribute('href', url);
+  node.setAttribute('preserveAspectRatio', 'xMidYMid slice');
+  svg.appendChild(node);
+  const rec = register({
+    id: uuid(),
+    type: 'image',
+    node,
+    x, y, w: W, h: H,
+    attrs: { src: url, fit: 'cover' },
+    parentId: null,
+  });
+  const f = frameContaining(rec);
+  if (f) rec.parentId = f.id;
+  onElementCreated(rec);
   return rec;
 }
 

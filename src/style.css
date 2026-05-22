@@ -407,6 +407,24 @@ body.board-on #board { display: flex; }
   cursor: pointer;
 }
 
+.ctx-num-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.ctx-num-input {
+  width: 44px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+  font-size: 12px;
+  background: var(--bg);
+  color: var(--text);
+}
+
 .ctx-palette {
   width: 220px;
   padding: 12px;

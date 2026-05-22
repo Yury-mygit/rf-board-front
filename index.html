@@ -41,6 +41,9 @@
             <button class="board-tool" data-tool="frame" title="Фрейм" aria-label="Фрейм">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V6a2 2 0 0 1 2-2h3"/><path d="M15 4h3a2 2 0 0 1 2 2v3"/><path d="M20 15v3a2 2 0 0 1-2 2h-3"/><path d="M9 20H6a2 2 0 0 1-2-2v-3"/></svg>
             </button>
+            <button class="board-tool" data-tool="image" title="Картинка (URL)" aria-label="Картинка">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="1.5" fill="currentColor"/><path d="m3 17 5-5 4 4 3-3 6 6"/></svg>
+            </button>
           </div>
           <div id="board-canvas" class="board-canvas"></div>
           <div id="board-zoom-ctl" class="board-zoom-ctl">
@@ -61,6 +64,25 @@
               <button id="ctx-stroke-btn" class="ctx-tool" title="Граница">
                 <span class="ctx-tool-stroke"></span>
               </button>
+              <span class="ctx-sep"></span>
+              <label class="ctx-num-label" title="Радиус скругления">
+                rx
+                <input id="ctx-rx" class="ctx-num-input" type="number" min="0" max="64" step="1" value="4"/>
+              </label>
+              <label class="ctx-num-label" title="Толщина рамки">
+                sw
+                <input id="ctx-sw" class="ctx-num-input" type="number" min="0" max="20" step="1" value="2"/>
+              </label>
+            </div>
+            <div id="ctx-toolbar-line" class="ctx-toolbar" style="display:none">
+              <button id="ctx-line-color-btn" class="ctx-tool" title="Цвет линии">
+                <span class="ctx-tool-stroke"></span>
+              </button>
+              <span class="ctx-sep"></span>
+              <label class="ctx-num-label" title="Толщина линии">
+                sw
+                <input id="ctx-line-sw" class="ctx-num-input" type="number" min="1" max="20" step="1" value="2"/>
+              </label>
             </div>
             <div id="ctx-toolbar-text" class="ctx-toolbar" style="display:none">
               <button id="ctx-color-btn" class="ctx-tool" title="Цвет текста">

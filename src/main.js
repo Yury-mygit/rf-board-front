@@ -165,6 +165,27 @@ function buildContextMenu() {
     commitAttrChange(ctxMenuTarget, { fontSize: before }, { fontSize: after });
   });
 
+  const numInputHandler = (input, attrKey) => {
+    input.addEventListener('change', e => {
+      e.stopPropagation();
+      if (!ctxMenuTarget) return;
+      const before = ctxMenuTarget.attrs?.[attrKey];
+      const after = +input.value;
+      if (before === after) return;
+      commitAttrChange(ctxMenuTarget, { [attrKey]: before }, { [attrKey]: after });
+    });
+    input.addEventListener('mousedown', e => e.stopPropagation());
+  };
+  numInputHandler(document.getElementById('ctx-rx'), 'rx');
+  numInputHandler(document.getElementById('ctx-sw'), 'strokeWidth');
+  numInputHandler(document.getElementById('ctx-line-sw'), 'strokeWidth');
+
+  // Палитра цвета для line — переиспользуем общую палитру (как у rect.stroke).
+  document.getElementById('ctx-line-color-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    togglePalette('stroke');
+  });
+
   grid.querySelectorAll('.ctx-color').forEach(b => {
     b.addEventListener('click', e => {
       e.stopPropagation();
@@ -220,6 +241,7 @@ function closePalette() {
   document.getElementById('ctx-fill-btn').classList.remove('active');
   document.getElementById('ctx-stroke-btn').classList.remove('active');
   document.getElementById('ctx-color-btn').classList.remove('active');
+  document.getElementById('ctx-line-color-btn')?.classList.remove('active');
 }
 
 function togglePalette(prop) {
@@ -230,6 +252,7 @@ function togglePalette(prop) {
   document.getElementById('ctx-fill-btn').classList.toggle('active', prop === 'fill');
   document.getElementById('ctx-stroke-btn').classList.toggle('active', prop === 'stroke');
   document.getElementById('ctx-color-btn').classList.toggle('active', prop === 'color');
+  document.getElementById('ctx-line-color-btn')?.classList.toggle('active', prop === 'stroke');
   document.getElementById('ctx-opacity-row').style.display = (prop === 'color') ? 'none' : '';
   refreshContextUI();
 }
@@ -237,11 +260,16 @@ function togglePalette(prop) {
 function refreshContextUI() {
   if (!ctxMenuTarget) return;
   const a = ctxMenuTarget.attrs || {};
-  if (ctxMenuTarget.type === 'rect') {
-    const fill = a.fill !== undefined ? a.fill : DEFAULT_FILL;
-    const stroke = a.stroke !== undefined ? a.stroke : DEFAULT_STROKE;
-    const fillIcon = document.querySelector('.ctx-tool-fill');
-    const strokeIcon = document.querySelector('.ctx-tool-stroke');
+  if (ctxMenuTarget.type === 'rect' || ctxMenuTarget.type === 'note') {
+    const isNote = ctxMenuTarget.type === 'note';
+    const defaultFill = isNote ? '#fff8c6' : DEFAULT_FILL;
+    const defaultStroke = isNote ? '#f1c40f' : DEFAULT_STROKE;
+    const defaultRx = isNote ? 2 : 4;
+    const defaultSw = isNote ? 1 : 2;
+    const fill = a.fill !== undefined ? a.fill : defaultFill;
+    const stroke = a.stroke !== undefined ? a.stroke : defaultStroke;
+    const fillIcon = document.querySelector('#ctx-toolbar-rect .ctx-tool-fill');
+    const strokeIcon = document.querySelector('#ctx-toolbar-rect .ctx-tool-stroke');
     if (fill === null) {
       fillIcon.classList.add('no-color');
       fillIcon.style.backgroundColor = '#fff';
@@ -256,6 +284,21 @@ function refreshContextUI() {
       strokeIcon.classList.remove('no-color');
       strokeIcon.style.borderColor = stroke;
     }
+    document.getElementById('ctx-rx').value = a.rx !== undefined ? a.rx : defaultRx;
+    document.getElementById('ctx-sw').value = a.strokeWidth !== undefined ? a.strokeWidth : defaultSw;
+  } else if (ctxMenuTarget.type === 'line') {
+    const stroke = a.stroke !== undefined ? a.stroke : '#212529';
+    const strokeIcon = document.querySelector('#ctx-toolbar-line .ctx-tool-stroke');
+    if (strokeIcon) {
+      if (stroke === null) {
+        strokeIcon.classList.add('no-color');
+        strokeIcon.style.borderColor = '#adb5bd';
+      } else {
+        strokeIcon.classList.remove('no-color');
+        strokeIcon.style.borderColor = stroke;
+      }
+    }
+    document.getElementById('ctx-line-sw').value = a.strokeWidth !== undefined ? a.strokeWidth : 2;
   } else if (ctxMenuTarget.type === 'text') {
     const color = a.color !== undefined ? a.color : DEFAULT_COLOR;
     const colorBar = document.querySelector('.ctx-color-bar');
@@ -286,15 +329,20 @@ function showContextMenu(rec, bbox) {
   const menu = document.getElementById('board-context-menu');
   const tbRect = document.getElementById('ctx-toolbar-rect');
   const tbText = document.getElementById('ctx-toolbar-text');
-  if (!rec || (rec.type !== 'rect' && rec.type !== 'text')) {
+  const tbLine = document.getElementById('ctx-toolbar-line');
+  const supported = rec && (rec.type === 'rect' || rec.type === 'text'
+                            || rec.type === 'note' || rec.type === 'line');
+  if (!supported) {
     hideContextMenu();
     return;
   }
   if (ctxMenuTarget && ctxMenuTarget.type !== rec.type) closePalette();
   ctxMenuTarget = rec;
   menu.style.display = '';
-  tbRect.style.display = rec.type === 'rect' ? '' : 'none';
+  // rect/note используют один toolbar (fill/stroke + rx/sw).
+  tbRect.style.display = (rec.type === 'rect' || rec.type === 'note') ? '' : 'none';
   tbText.style.display = rec.type === 'text' ? '' : 'none';
+  tbLine.style.display = rec.type === 'line' ? '' : 'none';
   positionContextMenu(bbox);
   refreshContextUI();
 }
