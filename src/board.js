@@ -507,11 +507,12 @@ function renderFromApi(e) {
     node.setAttribute('x2', e.x + e.w);
     node.setAttribute('y2', e.y + e.h);
     svg.appendChild(node);
-    register({
+    const rec = register({
       id: e.id, type: 'line', node,
       x1: e.x, y1: e.y, x2: e.x + e.w, y2: e.y + e.h,
       attrs, parentId,
     });
+    applyElementAttrs(rec);
     return;
   }
   if (e.type === 'text') {
@@ -999,6 +1000,12 @@ export function applyElementAttrs(rec) {
     if (a.strokeOpacity !== undefined) rec.node.setAttribute('stroke-opacity', a.strokeOpacity);
     if (a.rx !== undefined) rec.node.setAttribute('rx', a.rx);
     if (a.strokeWidth !== undefined) rec.node.setAttribute('stroke-width', a.strokeWidth);
+    return;
+  }
+  if (rec.type === 'line') {
+    if (a.stroke !== undefined) rec.node.setAttribute('stroke', a.stroke === null ? 'none' : a.stroke);
+    if (a.strokeWidth !== undefined) rec.node.setAttribute('stroke-width', a.strokeWidth);
+    if (a.strokeOpacity !== undefined) rec.node.setAttribute('stroke-opacity', a.strokeOpacity);
     return;
   }
   if (rec.type === 'text') {
