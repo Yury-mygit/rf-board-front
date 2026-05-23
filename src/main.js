@@ -218,6 +218,7 @@ function buildContextMenu() {
     const key = ctxPaletteFor + 'Opacity';
     const after = ctxMenuTarget.attrs[key];
     scheduleElementSave(ctxMenuTarget);
+    renderInspectPanel();
     if (opacityBefore !== after) {
       pushUndo({ kind: 'attrs', id: ctxMenuTarget.id,
         before: { [key]: opacityBefore },
@@ -382,6 +383,327 @@ function onBoardSelectionChanged(rec, bbox) {
   lastSelectedBbox = bbox || null;
   if (!rec) hideContextMenu();
   else showContextMenu(rec, bbox);
+  renderInspectPanel();
+}
+
+// ── Inspect panel (правая) ──────────────────────────────────────────────────
+
+const inspectBody = document.querySelector('#inspect-panel .ip-body');
+const IP_EMPTY = '<div class="ip-empty">Выделите элемент, чтобы увидеть его свойства.</div>';
+
+function ipEsc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function ipRound(v) {
+  if (v == null || Number.isNaN(v)) return '—';
+  return Math.round(v).toString();
+}
+
+function ipRow(label, value, copyVal) {
+  const c = copyVal !== undefined ? copyVal : value;
+  return `<div class="ip-row"><label>${ipEsc(label)}</label><span class="ip-val" data-copy="${ipEsc(c)}">${ipEsc(value)}</span></div>`;
+}
+
+function ipBBox(recs) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const r of recs) {
+    let x1, y1, x2, y2;
+    if (r.type === 'line') {
+      x1 = Math.min(r.x1, r.x2); y1 = Math.min(r.y1, r.y2);
+      x2 = Math.max(r.x1, r.x2); y2 = Math.max(r.y1, r.y2);
+    } else {
+      x1 = r.x; y1 = r.y; x2 = r.x + r.w; y2 = r.y + r.h;
+    }
+    if (x1 < minX) minX = x1;
+    if (y1 < minY) minY = y1;
+    if (x2 > maxX) maxX = x2;
+    if (y2 > maxY) maxY = y2;
+  }
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
+function ipRenderHeader(rec) {
+  const shortId = rec.id.slice(0, 8) + '…';
+  return `
+    <div class="ip-section">
+      ${ipRow('type', rec.type, rec.type)}
+      <div class="ip-row"><label>id</label>
+        <span class="ip-val" data-copy="${ipEsc(rec.id)}" title="${ipEsc(rec.id)}">${ipEsc(shortId)}</span>
+      </div>
+    </div>
+  `;
+}
+
+function ipRenderGeometry(rec) {
+  let rows = '';
+  if (rec.type === 'line') {
+    rows = ipRow('X1', ipRound(rec.x1), rec.x1) +
+           ipRow('Y1', ipRound(rec.y1), rec.y1) +
+           ipRow('X2', ipRound(rec.x2), rec.x2) +
+           ipRow('Y2', ipRound(rec.y2), rec.y2);
+  } else {
+    rows = ipRow('X', ipRound(rec.x), rec.x) +
+           ipRow('Y', ipRound(rec.y), rec.y) +
+           ipRow('W', ipRound(rec.w), rec.w) +
+           ipRow('H', ipRound(rec.h), rec.h);
+    if (rec.parentId) {
+      const parent = boardGetElementById(rec.parentId);
+      if (parent) {
+        rows += ipRow('Xrel', ipRound(rec.x - parent.x), rec.x - parent.x);
+        rows += ipRow('Yrel', ipRound(rec.y - parent.y), rec.y - parent.y);
+      }
+    }
+  }
+  return `<div class="ip-section"><h4>Geometry</h4>${rows}</div>`;
+}
+
+function ipColorRow(label, value) {
+  // value: null | undefined → 'none' (checkerboard swatch). иначе hex/url.
+  const isNone = value == null || value === 'none';
+  const display = isNone ? 'none' : String(value);
+  const swatchStyle = isNone ? '' : `background:${display}`;
+  return `
+    <div class="ip-row">
+      <label>${ipEsc(label)}</label>
+      <span class="ip-swatch" style="${ipEsc(swatchStyle)}"></span>
+      <span class="ip-val" data-copy="${ipEsc(display)}">${ipEsc(display)}</span>
+    </div>
+  `;
+}
+
+function ipNumRow(label, value, hideIfDefault) {
+  if (value == null || value === '' || (hideIfDefault !== undefined && value === hideIfDefault)) return '';
+  return ipRow(label, ipRound(value), value);
+}
+
+function ipRenderStyle(rec) {
+  const a = rec.attrs || {};
+  let rows = '';
+  if (rec.type === 'rect' || rec.type === 'frame' || rec.type === 'note') {
+    rows += ipColorRow('Fill', a.fill);
+    rows += ipColorRow('Stroke', a.stroke);
+    rows += ipNumRow('rx', a.rx);
+    rows += ipNumRow('sw', a.strokeWidth);
+    rows += ipNumRow('opacity', a.fillOpacity, 1);
+  } else if (rec.type === 'line') {
+    rows += ipColorRow('Stroke', a.stroke);
+    rows += ipNumRow('sw', a.strokeWidth);
+    rows += ipNumRow('opacity', a.strokeOpacity, 1);
+  } else if (rec.type === 'text') {
+    rows += ipColorRow('Color', a.color);
+    rows += ipNumRow('opacity', a.opacity, 1);
+  }
+  if (!rows) return '';
+  return `<div class="ip-section"><h4>Style</h4>${rows}</div>`;
+}
+
+function ipBoolRow(label, value) {
+  return `<div class="ip-row"><label>${ipEsc(label)}</label><span>${value ? '✓' : '—'}</span></div>`;
+}
+
+function ipPreview(text, max = 80) {
+  const s = String(text || '');
+  if (s.length <= max) return s;
+  return s.slice(0, max) + '…';
+}
+
+function ipRenderText(rec) {
+  if (rec.type !== 'text' && rec.type !== 'note') return '';
+  const a = rec.attrs || {};
+  const content = a.text || '';
+  let rows = '';
+  rows += ipNumRow('fontSize', a.fontSize || 14);
+  rows += ipBoolRow('bold', !!a.bold);
+  if (rec.type === 'text') {
+    rows += ipBoolRow('italic', !!a.italic);
+    rows += ipBoolRow('underline', !!a.underline);
+  }
+  rows += `
+    <div class="ip-row"><label>text</label>
+      <span class="ip-val" data-copy="${ipEsc(content)}" title="${ipEsc(content)}">${ipEsc(ipPreview(content))}</span>
+    </div>
+  `;
+  return `<div class="ip-section"><h4>Text</h4>${rows}</div>`;
+}
+
+function ipRenderImage(rec) {
+  if (rec.type !== 'image') return '';
+  const a = rec.attrs || {};
+  const src = a.src || '';
+  return `
+    <div class="ip-section">
+      <h4>Image</h4>
+      <div class="ip-row"><label>src</label>
+        <span class="ip-val" data-copy="${ipEsc(src)}" title="${ipEsc(src)}">${ipEsc(ipPreview(src, 60))}</span>
+      </div>
+    </div>
+  `;
+}
+
+function ipRenderFrame(rec) {
+  if (rec.type !== 'frame') return '';
+  const a = rec.attrs || {};
+  const title = a.title || '';
+  const children = boardGetChildrenOf(rec.id);
+  const types = {};
+  for (const c of children) types[c.type] = (types[c.type] || 0) + 1;
+  const breakdown = Object.entries(types).map(([t, n]) => `${t} ×${n}`).join(', ') || '—';
+  return `
+    <div class="ip-section">
+      <h4>Frame</h4>
+      <div class="ip-row"><label>title</label>
+        <span class="ip-val" data-copy="${ipEsc(title)}" title="${ipEsc(title)}">${ipEsc(ipPreview(title, 36)) || '—'}</span>
+      </div>
+      <div class="ip-row"><label>children</label><span>${children.length}</span></div>
+      <div class="ip-row"><label>types</label><span>${ipEsc(breakdown)}</span></div>
+    </div>
+  `;
+}
+
+function ipRenderSingle(rec) {
+  return ipRenderHeader(rec)
+       + ipRenderGeometry(rec)
+       + ipRenderStyle(rec)
+       + ipRenderText(rec)
+       + ipRenderImage(rec)
+       + ipRenderFrame(rec);
+}
+
+function ipCoords(rec) {
+  // Координаты относительно родителя-фрейма (если есть), иначе world.
+  if (rec.parentId) {
+    const parent = boardGetElementById(rec.parentId);
+    if (parent) return { x: rec.x - parent.x, y: rec.y - parent.y };
+  }
+  return { x: rec.x, y: rec.y };
+}
+
+function ipRecToCss(rec) {
+  if (rec.type === 'line') return null;
+  const a = rec.attrs || {};
+  const { x, y } = ipCoords(rec);
+  const lines = [
+    'position: absolute;',
+    `left: ${Math.round(x)}px;`,
+    `top: ${Math.round(y)}px;`,
+    `width: ${Math.round(rec.w)}px;`,
+    `height: ${Math.round(rec.h)}px;`,
+  ];
+  if (rec.type === 'image' && a.src) {
+    lines.push(`background-image: url(${a.src});`);
+    lines.push('background-size: cover;');
+    lines.push('background-position: center;');
+  } else if (a.fill != null && a.fill !== 'none') {
+    lines.push(`background: ${a.fill};`);
+  }
+  if (a.stroke != null && a.stroke !== 'none' && (a.strokeWidth || 0) > 0) {
+    lines.push(`border: ${a.strokeWidth}px solid ${a.stroke};`);
+  }
+  if (a.rx != null && a.rx > 0) {
+    lines.push(`border-radius: ${a.rx}px;`);
+  }
+  if (a.fillOpacity != null && a.fillOpacity !== 1) {
+    lines.push(`opacity: ${a.fillOpacity};`);
+  }
+  if (rec.type === 'text' || rec.type === 'note') {
+    if (a.fontSize) lines.push(`font-size: ${a.fontSize}px;`);
+    if (a.bold) lines.push('font-weight: 700;');
+    if (a.italic) lines.push('font-style: italic;');
+    if (a.underline) lines.push('text-decoration: underline;');
+    if (a.color != null && a.color !== 'none') lines.push(`color: ${a.color};`);
+  }
+  return lines.join('\n');
+}
+
+function ipBuildCss(selected) {
+  if (selected.length === 1) return ipRecToCss(selected[0]);
+  const bb = ipBBox(selected);
+  return [
+    'position: absolute;',
+    `left: ${Math.round(bb.x)}px;`,
+    `top: ${Math.round(bb.y)}px;`,
+    `width: ${Math.round(bb.w)}px;`,
+    `height: ${Math.round(bb.h)}px;`,
+  ].join('\n');
+}
+
+function ipRenderCssFooter(selected) {
+  // Для single-line не показываем (CSS не поддерживается).
+  if (selected.length === 1 && selected[0].type === 'line') return '';
+  return `<div class="ip-footer"><button class="ip-copy-css" type="button">Скопировать как CSS</button></div>`;
+}
+
+function ipAttachCssCopy() {
+  const btn = inspectBody.querySelector('.ip-copy-css');
+  if (!btn) return;
+  btn.addEventListener('click', async () => {
+    const sel = boardGetAllSelected();
+    const css = ipBuildCss(sel);
+    if (css == null) {
+      setStatus('CSS для этого типа не генерируется', true);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(css);
+      const orig = btn.textContent;
+      btn.textContent = '✓ CSS скопирован';
+      setTimeout(() => { btn.textContent = orig; }, 900);
+    } catch (err) {
+      setStatus(`Copy failed: ${err.message}`, true);
+    }
+  });
+}
+
+function ipRenderMulti(recs) {
+  const bb = ipBBox(recs);
+  const types = {};
+  for (const r of recs) types[r.type] = (types[r.type] || 0) + 1;
+  const breakdown = Object.entries(types).map(([t, c]) => `${t} ×${c}`).join(', ');
+  return `
+    <div class="ip-section">
+      <h4>Selection</h4>
+      <div class="ip-row"><label>count</label><span>${recs.length}</span></div>
+      <div class="ip-row"><label>types</label><span>${ipEsc(breakdown)}</span></div>
+    </div>
+    <div class="ip-section">
+      <h4>Bounding box</h4>
+      ${ipRow('X', ipRound(bb.x), bb.x)}
+      ${ipRow('Y', ipRound(bb.y), bb.y)}
+      ${ipRow('W', ipRound(bb.w), bb.w)}
+      ${ipRow('H', ipRound(bb.h), bb.h)}
+    </div>
+  `;
+}
+
+function ipAttachCopyHandlers() {
+  inspectBody.querySelectorAll('.ip-val[data-copy]').forEach(el => {
+    el.addEventListener('click', async () => {
+      const val = el.dataset.copy;
+      try {
+        await navigator.clipboard.writeText(val);
+        el.classList.add('flash');
+        setTimeout(() => el.classList.remove('flash'), 600);
+      } catch (err) {
+        setStatus(`Copy failed: ${err.message}`, true);
+      }
+    });
+  });
+}
+
+function renderInspectPanel() {
+  if (!inspectBody) return;
+  const selected = boardGetAllSelected();
+  if (!selected.length) {
+    inspectBody.innerHTML = IP_EMPTY;
+    return;
+  }
+  const body = selected.length === 1
+    ? ipRenderSingle(selected[0])
+    : ipRenderMulti(selected);
+  inspectBody.innerHTML = body + ipRenderCssFooter(selected);
+  ipAttachCopyHandlers();
+  ipAttachCssCopy();
 }
 
 // ── Board undo / redo ─────────────────────────────────────────────────────────
@@ -629,6 +951,7 @@ async function applyAttrs(op, direction) {
     else rec.attrs[k] = v;
   }
   applyElementAttrs(rec);
+  renderInspectPanel();
   await api.patchElement(boardId, op.id, {
     attrs: { ...rec.attrs },
     updatedAt: Date.now(),
@@ -643,6 +966,7 @@ function commitAttrChange(rec, before, after) {
   }
   applyElementAttrs(rec);
   scheduleElementSave(rec);
+  renderInspectPanel();
   pushUndo({ kind: 'attrs', id: rec.id, before, after });
 }
 
@@ -893,7 +1217,7 @@ initBoard(document.getElementById('board-canvas'), {
   getTool: () => boardTool,
   onToolUsed: clearBoardTool,
   onElementCreated: saveElementCreate,
-  onElementChanged: scheduleElementSave,
+  onElementChanged: (rec) => { scheduleElementSave(rec); renderInspectPanel(); },
   onCopyLink: openCopyMenu,
   onSelectionChanged: onBoardSelectionChanged,
   onMoveCommit: items => pushUndo({ kind: 'move', items }),

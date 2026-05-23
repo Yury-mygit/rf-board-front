@@ -656,6 +656,101 @@ body.board-sidebar-open .board-sidebar-backdrop { display: block; }
     transition: opacity .12s;
   }
   .board-sidebar:hover > * { opacity: 1; }
-  .board-content { padding-left: 44px; }
+  .board-content { padding-left: 44px; padding-right: 280px; }
+}
+
+/* ── Inspect-панель (правая) — всегда раскрыта на desktop ── */
+.inspect-panel {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 280px;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  z-index: 4;
+  overflow: hidden;
+}
+.inspect-panel .ip-body {
+  width: 280px;
+  height: 100%;
+  overflow-y: auto;
+  padding: 14px;
+  font-size: 12px;
+  color: var(--text);
+  box-sizing: border-box;
+}
+.inspect-panel .ip-empty {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 6px 2px;
+  line-height: 1.5;
+}
+.inspect-panel .ip-section { margin-bottom: 18px; }
+.inspect-panel .ip-section h4 {
+  margin: 0 0 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.inspect-panel .ip-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.inspect-panel .ip-row label {
+  min-width: 36px;
+  color: var(--muted);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 11px;
+}
+.inspect-panel .ip-row .ip-val {
+  flex: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  color: var(--text);
+}
+.inspect-panel .ip-row .ip-val:hover { background: rgba(255,255,255,0.06); }
+.inspect-panel .ip-row .ip-val.flash { background: var(--accent); color: #fff; }
+.inspect-panel .ip-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  vertical-align: middle;
+  background-image:
+    linear-gradient(45deg, #777 25%, transparent 25%),
+    linear-gradient(-45deg, #777 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #777 75%),
+    linear-gradient(-45deg, transparent 75%, #777 75%);
+  background-size: 8px 8px;
+  background-position: 0 0, 0 4px, 4px -4px, -4px 0;
+}
+.inspect-panel .ip-footer {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.inspect-panel .ip-copy-css {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.inspect-panel .ip-copy-css:hover { filter: brightness(1.08); }
+@media (max-width: 768px) {
+  .inspect-panel { display: none; }
 }
 
