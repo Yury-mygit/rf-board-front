@@ -313,17 +313,13 @@ const ZOOM_MAX = 4;
 const ZOOM_STEP = 1.2;
 let onViewportChanged = () => {};
 
-// Wheel: Ctrl+wheel (или pinch-зум на трекпаде, который браузер шлёт как
-// wheel с ctrlKey=true) → zoom вокруг курсора. Иначе → pan (deltaX/deltaY).
+// Wheel — всегда zoom вокруг курсора (Miro/Figma-стиль). Pan делается
+// средней кнопкой мыши, Space+drag или двумя пальцами на трекпаде.
+// Pinch-зум на трекпаде браузер шлёт как wheel с ctrlKey=true — попадает
+// в ту же ветку.
 function onWheel(e) {
   e.preventDefault();
-  if (e.ctrlKey) {
-    setZoomAt(e.clientX, e.clientY, viewport.zoom * Math.exp(-e.deltaY / 500));
-    return;
-  }
-  viewport.vx += e.deltaX / viewport.zoom;
-  viewport.vy += e.deltaY / viewport.zoom;
-  applyViewBox();
+  setZoomAt(e.clientX, e.clientY, viewport.zoom * Math.exp(-e.deltaY / 500));
 }
 
 // Два пальца на тач-экране: pan по центру + pinch-zoom. Точка под начальным
@@ -630,6 +626,10 @@ function setFrameTarget(frame) {
 
 function childrenOf(parentId) {
   return elements.filter(el => el.parentId === parentId);
+}
+
+export function getChildrenOf(parentId) {
+  return childrenOf(parentId);
 }
 
 // ── Mouse handlers ───────────────────────────────────────────────────────────

@@ -620,3 +620,42 @@ body.board-sidebar-open .board-sidebar-backdrop { display: block; }
   body.board-sidebar-open .board-sidebar { transform: translateX(0); }
 }
 
+/* Desktop (>768px): sidebar свёрнут в иконку, при наведении выдвигается. */
+@media (min-width: 769px) {
+  .board-sidebar {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 44px;
+    z-index: 4;
+    transition: width .18s ease, box-shadow .18s ease;
+  }
+  .board-sidebar:hover {
+    width: 240px;
+    box-shadow: 2px 0 10px rgba(0,0,0,.14);
+  }
+  .board-sidebar::before {
+    content: "≡";
+    position: absolute;
+    top: 8px;
+    left: 12px;
+    width: 20px;
+    height: 28px;
+    font-size: 22px;
+    line-height: 28px;
+    color: var(--muted);
+    pointer-events: none;
+    transition: opacity .12s;
+    z-index: 1;
+  }
+  .board-sidebar:hover::before { opacity: 0; }
+  .board-sidebar > * {
+    min-width: 240px;
+    opacity: 0;
+    transition: opacity .12s;
+  }
+  .board-sidebar:hover > * { opacity: 1; }
+  .board-content { padding-left: 44px; }
+}
+

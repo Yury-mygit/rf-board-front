@@ -1,4 +1,4 @@
-import { initBoard, setBoardCursor, loadBoard, clearBoard, applyElementAttrs, deselect as boardDeselect, removeElements as boardRemoveElements, exitEdit as boardExitEdit, getAllSelected as boardGetAllSelected, getSelectedCount as boardGetSelectedCount, addFromApi as boardAddFromApi, setElementGeo as boardSetElementGeo, setElementParent as boardSetElementParent, getElementById as boardGetElementById, zoomIn as boardZoomIn, zoomOut as boardZoomOut, fitView as boardFitView, setViewport as boardSetViewport, worldToScreen as boardWorldToScreen, isEditing as boardIsEditing } from './board.js';
+import { initBoard, setBoardCursor, loadBoard, clearBoard, applyElementAttrs, deselect as boardDeselect, removeElements as boardRemoveElements, exitEdit as boardExitEdit, getAllSelected as boardGetAllSelected, getSelectedCount as boardGetSelectedCount, addFromApi as boardAddFromApi, setElementGeo as boardSetElementGeo, setElementParent as boardSetElementParent, getElementById as boardGetElementById, getChildrenOf as boardGetChildrenOf, setSelection as boardSetSelection, zoomIn as boardZoomIn, zoomOut as boardZoomOut, fitView as boardFitView, setViewport as boardSetViewport, worldToScreen as boardWorldToScreen, isEditing as boardIsEditing } from './board.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -451,6 +451,94 @@ function snapshotRec(rec) {
     parentId: rec.parentId || null,
   };
 }
+
+// ── Copy / paste (custom MIME) ───────────────────────────────────────────────
+// При copy кладём в clipboard JSON в нашем формате application/x-rfboard-items
+// + plain-text fallback. При paste читаем свой MIME → создаём новые элементы
+// с remap'нутыми ID, сохраняя parent-child связи фреймов. Сдвиг (+24, +24)
+// чтобы было видно, что это копия.
+const CLIP_MIME = 'application/x-rfboard-items';
+const PASTE_OFFSET = 24;
+
+function isEditableTarget(t) {
+  if (!t || !t.closest) return false;
+  return !!t.closest('textarea, input, [contenteditable="true"]');
+}
+
+function collectForCopy() {
+  const selected = boardGetAllSelected();
+  if (!selected.length) return null;
+  const visited = new Set();
+  const items = [];
+  function add(el) {
+    if (visited.has(el.id)) return;
+    visited.add(el.id);
+    items.push(snapshotRec(el));
+    if (el.type === 'frame') {
+      for (const child of boardGetChildrenOf(el.id)) add(child);
+    }
+  }
+  for (const el of selected) add(el);
+  return { version: 1, items };
+}
+
+document.addEventListener('copy', (e) => {
+  if (isEditableTarget(e.target)) return;
+  if (!boardGetSelectedCount()) return;
+  const payload = collectForCopy();
+  if (!payload) return;
+  e.clipboardData.setData(CLIP_MIME, JSON.stringify(payload));
+  e.clipboardData.setData('text/plain', `[rfboard ${payload.items.length} elements]`);
+  e.preventDefault();
+});
+
+document.addEventListener('paste', async (e) => {
+  if (isEditableTarget(e.target)) return;
+  const json = e.clipboardData.getData(CLIP_MIME);
+  if (!json || !currentBoardId) return;
+  e.preventDefault();
+
+  let payload;
+  try { payload = JSON.parse(json); }
+  catch { setStatus('Не удалось прочитать данные из буфера', true); return; }
+  if (!payload || !Array.isArray(payload.items) || !payload.items.length) return;
+
+  const idMap = new Map();
+  for (const it of payload.items) idMap.set(it.id, randomUUID());
+
+  const records = [];
+  const now = Date.now();
+  for (const it of payload.items) {
+    const newId = idMap.get(it.id);
+    const oldParent = it.parentId || null;
+    const newParent = oldParent && idMap.has(oldParent) ? idMap.get(oldParent) : null;
+    const apiRec = {
+      id: newId, type: it.type,
+      parentId: newParent,
+      x: it.x + PASTE_OFFSET, y: it.y + PASTE_OFFSET,
+      w: it.w, h: it.h,
+      attrs: { ...(it.attrs || {}) },
+      createdAt: now, updatedAt: now,
+    };
+    try {
+      await api.createElement(currentBoardId, apiRec);
+      boardAddFromApi(apiRec);
+      records.push(apiRec);
+    } catch (err) {
+      setStatus(`Ошибка вставки: ${err.message}`, true);
+      return;
+    }
+  }
+
+  pushUndo({ kind: 'create', records });
+
+  // Выделяем только корневые (без parentId либо с parent'ом не из buffer'а).
+  const rootIds = records.filter(r => !r.parentId).map(r => r.id);
+  const els = rootIds.map(id => boardGetElementById(id)).filter(Boolean);
+  if (els.length) boardSetSelection(els);
+
+  setStatus(`Вставлено ${records.length} элементов`);
+});
 
 async function eraseElements(ids) {
   if (!currentBoardId || !ids.length) return;
