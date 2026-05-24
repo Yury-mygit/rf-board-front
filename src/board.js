@@ -5,6 +5,12 @@
 // Для line: (x, y) = первая точка, (x+w, y+h) = вторая (w/h могут быть отрицательными).
 // parentId: только для фреймов (frame containment, как в Miro).
 
+import {
+  BPMN_SHAPE_TYPES, BPMN_DEFAULTS, isBpmnShape, isBpmnType,
+  ensureBpmnDefs, createBpmnShape, applyBpmnShapeGeo, applyBpmnShapeAttrs,
+  createBpmnFlow, updateBpmnFlow, normalizeBpmnGeo,
+} from './bpmn.js';
+
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 let svg = null;
@@ -31,6 +37,7 @@ let rubber = null;   // rubber-band selection (drag по пустому мест
 let selectedIds = new Set(); // id'ы выбранных элементов
 let editing = null;  // text/note в режиме редактирования (input доступен)
 let frameTarget = null; // фрейм-цель при drag (для подсветки)
+let flowStart = null; // первый shape выбран для создания bpmn_flow
 let handlesG = null; // <g> с 8 resize-handles, всегда поверх
 let gridBgRect = null; // фоновый rect под всеми элементами с fill=url(#board-grid)
 let gridPattern = null; // <pattern>, шаг пересчитывается в applyViewBox
@@ -145,6 +152,7 @@ export function initBoard(container, opts = {}) {
   container.appendChild(svg);
 
   installGridBackground();
+  ensureBpmnDefs(svg);
 
   handlesG = createHandles();
   svg.appendChild(handlesG);
@@ -448,7 +456,7 @@ function updateHandles(frame) {
 function refreshHandlesIfVisible() {
   if (!handlesG || handlesG.style.display === 'none') return;
   const sel = getOnlySelected();
-  if (sel && (sel.type === 'frame' || sel.type === 'rect' || sel.type === 'image')) updateHandles(sel);
+  if (sel && (sel.type === 'frame' || sel.type === 'rect' || sel.type === 'image' || isBpmnShape(sel.type))) updateHandles(sel);
 }
 
 export function setBoardCursor(tool) {
@@ -534,6 +542,24 @@ function renderFromApi(e) {
     svg.appendChild(node);
     const rec = register({ id: e.id, type: 'image', node, x: e.x, y: e.y, w: e.w, h: e.h, attrs, parentId });
     applyElementAttrs(rec);
+    return;
+  }
+  if (isBpmnShape(e.type)) {
+    const node = createBpmnShape(e.type, attrs);
+    svg.appendChild(node);
+    const rec = register({ id: e.id, type: e.type, node, x: e.x, y: e.y, w: e.w, h: e.h, attrs, parentId });
+    applyBpmnShapeGeo(node, e.type, e.x, e.y, e.w, e.h);
+    applyBpmnShapeAttrs(node, e.type, attrs);
+    return;
+  }
+  if (e.type === 'bpmn_flow') {
+    const node = createBpmnFlow();
+    svg.appendChild(node);
+    const rec = register({ id: e.id, type: 'bpmn_flow', node, x: e.x, y: e.y, w: e.w, h: e.h, attrs, parentId: null });
+    // source/target ищем в loaded elements; если не нашли — рисуем по x/y/w/h.
+    const s = attrs.sourceId ? elements.find(el => el.id === attrs.sourceId) : null;
+    const t = attrs.targetId ? elements.find(el => el.id === attrs.targetId) : null;
+    updateBpmnFlow(rec, s, t);
   }
 }
 
@@ -549,7 +575,35 @@ function findShape(target) {
 
 function canMove(el) {
   return el.type === 'line' || el.type === 'rect' || el.type === 'frame'
-      || el.type === 'text' || el.type === 'note' || el.type === 'image';
+      || el.type === 'text' || el.type === 'note' || el.type === 'image'
+      || isBpmnShape(el.type);
+}
+
+// Все bpmn_flow, у которых source или target — заданный id. Используется для
+// пересчёта path при move/resize концов.
+function flowsTouching(id) {
+  return elements.filter(el => el.type === 'bpmn_flow'
+    && (el.attrs?.sourceId === id || el.attrs?.targetId === id));
+}
+
+export function getFlowsTouchingAny(ids) {
+  const idSet = new Set(ids);
+  return elements.filter(el => el.type === 'bpmn_flow'
+    && (idSet.has(el.attrs?.sourceId) || idSet.has(el.attrs?.targetId)));
+}
+
+function recomputeFlows(ids) {
+  if (!ids || !ids.length) return;
+  const idSet = new Set(ids);
+  for (const el of elements) {
+    if (el.type !== 'bpmn_flow') continue;
+    const sId = el.attrs?.sourceId;
+    const tId = el.attrs?.targetId;
+    if (!(idSet.has(sId) || idSet.has(tId))) continue;
+    const s = sId ? elements.find(e => e.id === sId) : null;
+    const t = tId ? elements.find(e => e.id === tId) : null;
+    updateBpmnFlow(el, s, t);
+  }
 }
 
 function enterEdit(rec) {
@@ -666,7 +720,7 @@ function onDown(e) {
   // Handle resize-handle первым: имеет приоритет над shape-кликом.
   const handleEl = e.target.closest('.resize-handle');
   const onlySel = getOnlySelected();
-  if (handleEl && onlySel && (onlySel.type === 'frame' || onlySel.type === 'rect' || onlySel.type === 'image')) {
+  if (handleEl && onlySel && (onlySel.type === 'frame' || onlySel.type === 'rect' || onlySel.type === 'image' || isBpmnShape(onlySel.type))) {
     const b = bboxOf(onlySel);
     resize = {
       el: onlySel,
@@ -688,6 +742,46 @@ function onDown(e) {
     if (tool === 'text') { placeText(p.x, p.y); onToolUsed(); e.preventDefault(); return; }
     if (tool === 'note') { placeNote(p.x, p.y); onToolUsed(); e.preventDefault(); return; }
     if (tool === 'image') { promptAndPlaceImage(p.x, p.y); onToolUsed(); e.preventDefault(); return; }
+    if (tool === 'bpmn_flow') {
+      const target = findShape(e.target);
+      const ok = target && isBpmnShape(target.type);
+      if (!ok) {
+        // клик мимо — сбрасываем выбор source/инструмент
+        if (flowStart) flowStart.node.classList.remove('bpmn-flow-source');
+        flowStart = null;
+        onToolUsed();
+        e.preventDefault();
+        return;
+      }
+      if (!flowStart) {
+        flowStart = target;
+        target.node.classList.add('bpmn-flow-source');
+        e.preventDefault();
+        return;
+      }
+      if (target.id === flowStart.id) {
+        flowStart.node.classList.remove('bpmn-flow-source');
+        flowStart = null;
+        e.preventDefault();
+        return;
+      }
+      // создаём flow
+      const node = createBpmnFlow();
+      svg.appendChild(node);
+      const rec = register({
+        id: uuid(), type: 'bpmn_flow', node,
+        x: 0, y: 0, w: 0, h: 0,
+        attrs: { sourceId: flowStart.id, targetId: target.id },
+        parentId: null,
+      });
+      updateBpmnFlow(rec, flowStart, target);
+      flowStart.node.classList.remove('bpmn-flow-source');
+      flowStart = null;
+      onElementCreated(rec);
+      onToolUsed();
+      e.preventDefault();
+      return;
+    }
     drag = { type: tool, x1: p.x, y1: p.y, node: null };
     e.preventDefault();
     return;
@@ -775,8 +869,20 @@ function onMove(e) {
       if (r.handle.includes('n')) ny = bottom - FRAME_MIN;
       nh = FRAME_MIN;
     }
+    // event/gateway — квадратные: усредняем размер, привязка к актуальному углу.
+    if (r.el.type === 'bpmn_event' || r.el.type === 'bpmn_gateway') {
+      const s = Math.max(nw, nh);
+      if (r.handle.includes('w')) nx = right - s;
+      if (r.handle.includes('n')) ny = bottom - s;
+      nw = s; nh = s;
+    }
     r.el.x = nx; r.el.y = ny; r.el.w = nw; r.el.h = nh;
-    setRectAttrs(r.el.node, nx, ny, nw, nh);
+    if (isBpmnShape(r.el.type)) {
+      applyBpmnShapeGeo(r.el.node, r.el.type, nx, ny, nw, nh);
+      recomputeFlows([r.el.id]);
+    } else {
+      setRectAttrs(r.el.node, nx, ny, nw, nh);
+    }
     updateHandles(r.el);
     if (getOnlySelected() === r.el) onSelectionChanged(r.el, bboxOf(r.el));
     return;
@@ -829,7 +935,7 @@ function onMove(e) {
       }
     }
     if (getOnlySelected() === move.el) {
-      if (move.el.type === 'frame' || move.el.type === 'rect' || move.el.type === 'image') updateHandles(move.el);
+      if (move.el.type === 'frame' || move.el.type === 'rect' || move.el.type === 'image' || isBpmnShape(move.el.type)) updateHandles(move.el);
       onSelectionChanged(move.el, bboxOf(move.el));
     }
   }
@@ -900,10 +1006,36 @@ function onUp(e) {
   if (drag) {
     const p = point(e);
     const small = Math.abs(p.x - drag.x1) < 3 && Math.abs(p.y - drag.y1) < 3;
-    if (drag.node && !small) {
-      const rec = { id: uuid(), type: drag.type, node: drag.node, attrs: {}, parentId: null };
+    // Для bpmn-shape click-без-drag разрешён: размещаем default-размером в точке клика.
+    if (drag.node && small && isBpmnShape(drag.type)) {
+      const def = BPMN_DEFAULTS[drag.type];
+      applyBpmnShapeGeo(drag.node, drag.type,
+        drag.x1 - def.w / 2, drag.y1 - def.h / 2, def.w, def.h);
+    } else if (small) {
+      if (drag.node) drag.node.remove();
+      setFrameTarget(null);
+      drag = null;
+      return;
+    }
+    if (drag.node) {
+      const attrs = isBpmnShape(drag.type)
+        ? (drag.type === 'bpmn_event' ? { kind: 'start' }
+          : drag.type === 'bpmn_gateway' ? { kind: 'exclusive' }
+          : {})
+        : {};
+      const rec = { id: uuid(), type: drag.type, node: drag.node, attrs, parentId: null };
       if (drag.type === 'line') {
         rec.x1 = drag.x1; rec.y1 = drag.y1; rec.x2 = p.x; rec.y2 = p.y;
+      } else if (isBpmnShape(drag.type)) {
+        const g = small
+          ? { x: drag.x1 - BPMN_DEFAULTS[drag.type].w / 2,
+              y: drag.y1 - BPMN_DEFAULTS[drag.type].h / 2,
+              w: BPMN_DEFAULTS[drag.type].w,
+              h: BPMN_DEFAULTS[drag.type].h }
+          : normalizeBpmnGeo(drag.type, drag.x1, drag.y1, p.x, p.y);
+        rec.x = g.x; rec.y = g.y; rec.w = g.w; rec.h = g.h;
+        applyBpmnShapeGeo(rec.node, rec.type, rec.x, rec.y, rec.w, rec.h);
+        applyBpmnShapeAttrs(rec.node, rec.type, attrs);
       } else {
         rec.x = Math.min(drag.x1, p.x);
         rec.y = Math.min(drag.y1, p.y);
@@ -920,9 +1052,6 @@ function onUp(e) {
       setFrameTarget(null);
       onElementCreated(rec);
       onToolUsed();
-    } else if (drag.node) {
-      drag.node.remove();
-      setFrameTarget(null);
     }
     drag = null;
     return;
@@ -1051,10 +1180,23 @@ export function applyElementAttrs(rec) {
               : fit === 'fill' ? 'none'
               : 'xMidYMid slice';
     rec.node.setAttribute('preserveAspectRatio', par);
+    return;
+  }
+  if (isBpmnShape(rec.type)) {
+    applyBpmnShapeAttrs(rec.node, rec.type, a);
+    return;
+  }
+  if (rec.type === 'bpmn_flow') {
+    const s = a.sourceId ? elements.find(el => el.id === a.sourceId) : null;
+    const t = a.targetId ? elements.find(el => el.id === a.targetId) : null;
+    updateBpmnFlow(rec, s, t);
   }
 }
 
 function createShape(type) {
+  if (isBpmnShape(type)) {
+    return createBpmnShape(type, {});
+  }
   if (type === 'line') {
     const el = document.createElementNS(SVG_NS, 'line');
     el.setAttribute('stroke', '#212529');
@@ -1161,6 +1303,11 @@ function applyShape(node, type, x1, y1, x2, y2) {
     node.setAttribute('y2', y2);
     return;
   }
+  if (isBpmnShape(type)) {
+    const g = normalizeBpmnGeo(type, x1, y1, x2, y2);
+    applyBpmnShapeGeo(node, type, g.x, g.y, g.w, g.h);
+    return;
+  }
   setRectAttrs(node, Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
 }
 
@@ -1175,6 +1322,11 @@ function moveBy(el, dx, dy) {
     return;
   }
   el.x += dx; el.y += dy;
+  if (isBpmnShape(el.type)) {
+    applyBpmnShapeGeo(el.node, el.type, el.x, el.y, el.w, el.h);
+    recomputeFlows([el.id]);
+    return;
+  }
   if (el.type === 'rect' || el.type === 'image') {
     el.node.setAttribute('x', el.x);
     el.node.setAttribute('y', el.y);
@@ -1232,7 +1384,7 @@ export function deselect() {
 function notifySelectionChanged() {
   if (selectedIds.size === 1) {
     const only = getOnlySelected();
-    if (only.type === 'frame' || only.type === 'rect' || only.type === 'image') showHandlesFor(only);
+    if (only.type === 'frame' || only.type === 'rect' || only.type === 'image' || isBpmnShape(only.type)) showHandlesFor(only);
     else hideHandles();
     onSelectionChanged(only, bboxOf(only));
   } else {
@@ -1284,6 +1436,18 @@ function applyGeo(rec) {
     setRectAttrs(rec.node, rec.x, rec.y, rec.w, rec.h);
     return;
   }
+  if (isBpmnShape(rec.type)) {
+    applyBpmnShapeGeo(rec.node, rec.type, rec.x, rec.y, rec.w, rec.h);
+    recomputeFlows([rec.id]);
+    return;
+  }
+  if (rec.type === 'bpmn_flow') {
+    const a = rec.attrs || {};
+    const s = a.sourceId ? elements.find(el => el.id === a.sourceId) : null;
+    const t = a.targetId ? elements.find(el => el.id === a.targetId) : null;
+    updateBpmnFlow(rec, s, t);
+    return;
+  }
   if (rec.type === 'text') {
     const fo = rec.node.querySelector('foreignObject');
     const hit = rec.node.querySelector('.board-edit-hit');
@@ -1327,7 +1491,7 @@ export function setElementGeo(id, geo) {
   applyGeo(rec);
   if (rec.type === 'text') resizeTextWidth(rec);
   if (getOnlySelected() === rec) {
-    if (rec.type === 'frame' || rec.type === 'rect' || rec.type === 'image') updateHandles(rec);
+    if (rec.type === 'frame' || rec.type === 'rect' || rec.type === 'image' || isBpmnShape(rec.type)) updateHandles(rec);
     onSelectionChanged(rec, bboxOf(rec));
   }
 }

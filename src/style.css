@@ -754,3 +754,115 @@ body.board-sidebar-open .board-sidebar-backdrop { display: block; }
   .inspect-panel { display: none; }
 }
 
+/* ── BPMN ── */
+.bpmn-shape { cursor: pointer; }
+.bpmn-shape.selected .bpmn-event-outer,
+.bpmn-shape.selected .bpmn-task-rect,
+.bpmn-shape.selected .bpmn-gateway-poly {
+  stroke: var(--accent);
+}
+.bpmn-shape.selected .bpmn-flow-path { stroke: var(--accent); }
+
+.bpmn-label-fo .bpmn-label {
+  font: 13px/1.2 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: #212529;
+  text-align: center;
+  width: 100%;
+  height: 100%;
+}
+.bpmn-label-fo .bpmn-label.bpmn-label-inside {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  word-break: break-word;
+}
+.bpmn-label-fo .bpmn-label.bpmn-label-below {
+  padding-top: 4px;
+}
+
+.bpmn-flow-label-fo .bpmn-flow-label {
+  font: 12px/1.2 system-ui, -apple-system, sans-serif;
+  color: #495057;
+  background: rgba(255,255,255,.85);
+  border-radius: 3px;
+  padding: 2px 6px;
+  text-align: center;
+  display: inline-block;
+}
+
+/* подсветка source-shape при создании flow */
+.bpmn-shape.bpmn-flow-source .bpmn-event-outer,
+.bpmn-shape.bpmn-flow-source .bpmn-task-rect,
+.bpmn-shape.bpmn-flow-source .bpmn-gateway-poly {
+  stroke: var(--accent);
+  stroke-dasharray: 4 3;
+}
+
+/* ── Toolbar BPMN popover ── */
+.board-tool-popover {
+  position: absolute;
+  left: 52px;
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,.12);
+  z-index: 6;
+  min-width: 180px;
+}
+.board-tool-popover.open { display: flex; }
+.board-tool-popover button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.board-tool-popover button:hover { background: var(--bg); }
+.board-tool-popover button.active { background: var(--accent); color: #fff; }
+.board-tool-popover .pop-icon {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.board-tool-popover .pop-icon svg { width: 22px; height: 22px; }
+
+@media (max-width: 768px) {
+  .board-tool-popover { left: 92px; }
+}
+
+/* ── BPMN context-menu toolbar ── */
+#ctx-toolbar-bpmn { gap: 6px; align-items: center; }
+#ctx-toolbar-bpmn input.ctx-bpmn-label {
+  width: 140px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 13px;
+  background: var(--surface);
+  color: var(--text);
+}
+#ctx-toolbar-bpmn select.ctx-bpmn-kind {
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 13px;
+  background: var(--surface);
+  color: var(--text);
+}
+

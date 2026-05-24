@@ -1,4 +1,4 @@
-import { initBoard, setBoardCursor, loadBoard, clearBoard, applyElementAttrs, deselect as boardDeselect, removeElements as boardRemoveElements, exitEdit as boardExitEdit, getAllSelected as boardGetAllSelected, getSelectedCount as boardGetSelectedCount, addFromApi as boardAddFromApi, setElementGeo as boardSetElementGeo, setElementParent as boardSetElementParent, getElementById as boardGetElementById, getChildrenOf as boardGetChildrenOf, setSelection as boardSetSelection, zoomIn as boardZoomIn, zoomOut as boardZoomOut, fitView as boardFitView, setViewport as boardSetViewport, worldToScreen as boardWorldToScreen, isEditing as boardIsEditing } from './board.js';
+import { initBoard, setBoardCursor, loadBoard, clearBoard, applyElementAttrs, deselect as boardDeselect, removeElements as boardRemoveElements, exitEdit as boardExitEdit, getAllSelected as boardGetAllSelected, getSelectedCount as boardGetSelectedCount, addFromApi as boardAddFromApi, setElementGeo as boardSetElementGeo, setElementParent as boardSetElementParent, getElementById as boardGetElementById, getChildrenOf as boardGetChildrenOf, setSelection as boardSetSelection, zoomIn as boardZoomIn, zoomOut as boardZoomOut, fitView as boardFitView, setViewport as boardSetViewport, worldToScreen as boardWorldToScreen, isEditing as boardIsEditing, getFlowsTouchingAny as boardGetFlowsTouchingAny } from './board.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -60,9 +60,17 @@ let allBoards = [];
 let currentBoardId = null;
 const elementSaveTimers = new Map(); // id → timeoutId (debounced PATCH)
 
+const BPMN_TOOLS = new Set(['bpmn_event', 'bpmn_task', 'bpmn_gateway', 'bpmn_flow']);
+
 function setBoardTool(name) {
   boardTool = boardTool === name ? null : name;
   document.querySelectorAll('.board-tool').forEach(el => {
+    el.classList.toggle('active', el.dataset.tool === boardTool);
+  });
+  // BPMN-кнопка в основном toolbar — отдельная подсветка по группе
+  const bpmnBtn = document.getElementById('bpmn-tool-btn');
+  if (bpmnBtn) bpmnBtn.classList.toggle('active', BPMN_TOOLS.has(boardTool));
+  document.querySelectorAll('#bpmn-popover .bpmn-pop-item').forEach(el => {
     el.classList.toggle('active', el.dataset.tool === boardTool);
   });
   setBoardCursor(boardTool);
@@ -71,7 +79,25 @@ function setBoardTool(name) {
 function clearBoardTool() {
   boardTool = null;
   document.querySelectorAll('.board-tool').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('#bpmn-popover .bpmn-pop-item').forEach(el => el.classList.remove('active'));
+  closeBpmnPopover();
   setBoardCursor(null);
+}
+
+function closeBpmnPopover() {
+  document.getElementById('bpmn-popover')?.classList.remove('open');
+}
+
+function toggleBpmnPopover() {
+  const pop = document.getElementById('bpmn-popover');
+  if (!pop) return;
+  const btn = document.getElementById('bpmn-tool-btn');
+  if (!btn) return;
+  // позиционируем рядом с кнопкой по вертикали
+  const btnR = btn.getBoundingClientRect();
+  const content = document.querySelector('.board-content').getBoundingClientRect();
+  pop.style.top = (btnR.top - content.top) + 'px';
+  pop.classList.toggle('open');
 }
 
 function recToApiGeometry(rec) {
@@ -120,6 +146,19 @@ const DEFAULT_FONT_SIZE = 14;
 
 let ctxMenuTarget = null;
 let ctxPaletteFor = null;
+
+const BPMN_KINDS = {
+  bpmn_event: [
+    { value: 'start', label: 'Старт' },
+    { value: 'intermediate', label: 'Промежут.' },
+    { value: 'end', label: 'Конец' },
+  ],
+  bpmn_gateway: [
+    { value: 'exclusive', label: 'Исключающий ×' },
+    { value: 'parallel', label: 'Параллельный +' },
+    { value: 'inclusive', label: 'Включающий ○' },
+  ],
+};
 
 function buildContextMenu() {
   const fillBtn = document.getElementById('ctx-fill-btn');
@@ -228,6 +267,43 @@ function buildContextMenu() {
     opacityBefore = undefined;
   });
 
+  // BPMN: label + kind. Commit label по blur (как у text у нас onTextCommit),
+  // kind — мгновенно.
+  const bpmnLabel = document.getElementById('ctx-bpmn-label');
+  const bpmnKind = document.getElementById('ctx-bpmn-kind');
+  let bpmnLabelBefore = null;
+  bpmnLabel.addEventListener('focus', () => {
+    if (!ctxMenuTarget) return;
+    bpmnLabelBefore = ctxMenuTarget.attrs?.label || '';
+  });
+  bpmnLabel.addEventListener('input', e => {
+    e.stopPropagation();
+    if (!ctxMenuTarget) return;
+    ctxMenuTarget.attrs = ctxMenuTarget.attrs || {};
+    ctxMenuTarget.attrs.label = bpmnLabel.value;
+    applyElementAttrs(ctxMenuTarget);
+  });
+  bpmnLabel.addEventListener('blur', () => {
+    if (!ctxMenuTarget || bpmnLabelBefore === null) return;
+    const after = bpmnLabel.value;
+    if (bpmnLabelBefore !== after) {
+      scheduleElementSave(ctxMenuTarget);
+      pushUndo({ kind: 'attrs', id: ctxMenuTarget.id,
+        before: { label: bpmnLabelBefore }, after: { label: after } });
+    }
+    bpmnLabelBefore = null;
+    renderInspectPanel();
+  });
+  bpmnLabel.addEventListener('mousedown', e => e.stopPropagation());
+  bpmnKind.addEventListener('change', e => {
+    e.stopPropagation();
+    if (!ctxMenuTarget) return;
+    const before = ctxMenuTarget.attrs?.kind;
+    const after = bpmnKind.value;
+    if (before === after) return;
+    commitAttrChange(ctxMenuTarget, { kind: before }, { kind: after });
+  });
+
   document.addEventListener('mousedown', e => {
     const menu = document.getElementById('board-context-menu');
     if (ctxPaletteFor && menu && !menu.contains(e.target)) {
@@ -300,6 +376,20 @@ function refreshContextUI() {
       }
     }
     document.getElementById('ctx-line-sw').value = a.strokeWidth !== undefined ? a.strokeWidth : 2;
+  } else if (ctxMenuTarget.type === 'bpmn_event' || ctxMenuTarget.type === 'bpmn_task'
+          || ctxMenuTarget.type === 'bpmn_gateway' || ctxMenuTarget.type === 'bpmn_flow') {
+    const lblInput = document.getElementById('ctx-bpmn-label');
+    if (document.activeElement !== lblInput) lblInput.value = a.label || '';
+    const kindSel = document.getElementById('ctx-bpmn-kind');
+    const kinds = BPMN_KINDS[ctxMenuTarget.type];
+    if (kinds) {
+      kindSel.style.display = '';
+      kindSel.innerHTML = kinds.map(k =>
+        `<option value="${k.value}">${k.label}</option>`).join('');
+      kindSel.value = a.kind || kinds[0].value;
+    } else {
+      kindSel.style.display = 'none';
+    }
   } else if (ctxMenuTarget.type === 'text') {
     const color = a.color !== undefined ? a.color : DEFAULT_COLOR;
     const colorBar = document.querySelector('.ctx-color-bar');
@@ -331,8 +421,11 @@ function showContextMenu(rec, bbox) {
   const tbRect = document.getElementById('ctx-toolbar-rect');
   const tbText = document.getElementById('ctx-toolbar-text');
   const tbLine = document.getElementById('ctx-toolbar-line');
+  const tbBpmn = document.getElementById('ctx-toolbar-bpmn');
+  const isBpmn = rec && (rec.type === 'bpmn_event' || rec.type === 'bpmn_task'
+                         || rec.type === 'bpmn_gateway' || rec.type === 'bpmn_flow');
   const supported = rec && (rec.type === 'rect' || rec.type === 'text'
-                            || rec.type === 'note' || rec.type === 'line');
+                            || rec.type === 'note' || rec.type === 'line' || isBpmn);
   if (!supported) {
     hideContextMenu();
     return;
@@ -344,6 +437,7 @@ function showContextMenu(rec, bbox) {
   tbRect.style.display = (rec.type === 'rect' || rec.type === 'note') ? '' : 'none';
   tbText.style.display = rec.type === 'text' ? '' : 'none';
   tbLine.style.display = rec.type === 'line' ? '' : 'none';
+  tbBpmn.style.display = isBpmn ? '' : 'none';
   positionContextMenu(bbox);
   refreshContextUI();
 }
@@ -561,13 +655,36 @@ function ipRenderFrame(rec) {
   `;
 }
 
+function ipRenderBpmn(rec) {
+  if (rec.type !== 'bpmn_event' && rec.type !== 'bpmn_task'
+   && rec.type !== 'bpmn_gateway' && rec.type !== 'bpmn_flow') return '';
+  const a = rec.attrs || {};
+  let rows = '';
+  if (a.kind != null) {
+    const kinds = BPMN_KINDS[rec.type];
+    const label = kinds?.find(k => k.value === a.kind)?.label || a.kind;
+    rows += ipRow('kind', label, a.kind);
+  }
+  rows += `
+    <div class="ip-row"><label>label</label>
+      <span class="ip-val" data-copy="${ipEsc(a.label || '')}" title="${ipEsc(a.label || '')}">${ipEsc(ipPreview(a.label || '', 40)) || '—'}</span>
+    </div>
+  `;
+  if (rec.type === 'bpmn_flow') {
+    rows += ipRow('source', a.sourceId ? a.sourceId.slice(0, 8) + '…' : '—', a.sourceId || '');
+    rows += ipRow('target', a.targetId ? a.targetId.slice(0, 8) + '…' : '—', a.targetId || '');
+  }
+  return `<div class="ip-section"><h4>BPMN</h4>${rows}</div>`;
+}
+
 function ipRenderSingle(rec) {
   return ipRenderHeader(rec)
        + ipRenderGeometry(rec)
        + ipRenderStyle(rec)
        + ipRenderText(rec)
        + ipRenderImage(rec)
-       + ipRenderFrame(rec);
+       + ipRenderFrame(rec)
+       + ipRenderBpmn(rec);
 }
 
 function ipCoords(rec) {
@@ -629,8 +746,8 @@ function ipBuildCss(selected) {
 }
 
 function ipRenderCssFooter(selected) {
-  // Для single-line не показываем (CSS не поддерживается).
-  if (selected.length === 1 && selected[0].type === 'line') return '';
+  // Для single-line и bpmn_flow не показываем (CSS не поддерживается).
+  if (selected.length === 1 && (selected[0].type === 'line' || selected[0].type === 'bpmn_flow')) return '';
   return `<div class="ip-footer"><button class="ip-copy-css" type="button">Скопировать как CSS</button></div>`;
 }
 
@@ -1033,7 +1150,10 @@ async function deleteBoardSelected() {
   if (!currentBoardId) return;
   const all = boardGetAllSelected();
   if (!all.length) return;
-  const snapshots = all.map(snapshotRec);
+  // Каскадом удаляем bpmn_flow'ы, привязанные к удаляемым shape'ам.
+  const ids = all.map(r => r.id);
+  const attachedFlows = boardGetFlowsTouchingAny(ids).filter(f => !ids.includes(f.id));
+  const snapshots = [...all, ...attachedFlows].map(snapshotRec);
   try {
     await eraseElements(snapshots.map(s => s.id));
     pushUndo({ kind: 'delete', records: snapshots });
@@ -1179,7 +1299,24 @@ async function createBoard(title) {
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 document.querySelectorAll('.board-tool').forEach(el => {
-  el.addEventListener('click', () => setBoardTool(el.dataset.tool));
+  el.addEventListener('click', () => {
+    if (el.id === 'bpmn-tool-btn') { toggleBpmnPopover(); return; }
+    closeBpmnPopover();
+    setBoardTool(el.dataset.tool);
+  });
+});
+document.querySelectorAll('#bpmn-popover .bpmn-pop-item').forEach(el => {
+  el.addEventListener('click', () => {
+    setBoardTool(el.dataset.tool);
+    closeBpmnPopover();
+  });
+});
+document.addEventListener('mousedown', e => {
+  const pop = document.getElementById('bpmn-popover');
+  const btn = document.getElementById('bpmn-tool-btn');
+  if (!pop?.classList.contains('open')) return;
+  if (pop.contains(e.target) || btn?.contains(e.target)) return;
+  closeBpmnPopover();
 });
 
 document.getElementById('new-board-btn').addEventListener('click', () => { createBoard(); closeSidebar(); });
