@@ -1,4 +1,5 @@
-import { initBoard, setBoardCursor, loadBoard, clearBoard, applyElementAttrs, deselect as boardDeselect, removeElements as boardRemoveElements, exitEdit as boardExitEdit, getAllSelected as boardGetAllSelected, getSelectedCount as boardGetSelectedCount, addFromApi as boardAddFromApi, setElementGeo as boardSetElementGeo, setElementParent as boardSetElementParent, getElementById as boardGetElementById, getChildrenOf as boardGetChildrenOf, setSelection as boardSetSelection, zoomIn as boardZoomIn, zoomOut as boardZoomOut, fitView as boardFitView, setViewport as boardSetViewport, worldToScreen as boardWorldToScreen, isEditing as boardIsEditing, getFlowsTouchingAny as boardGetFlowsTouchingAny } from './board.js';
+import { initBoard, setBoardCursor, loadBoard, clearBoard, applyElementAttrs, deselect as boardDeselect, removeElements as boardRemoveElements, exitEdit as boardExitEdit, getAllSelected as boardGetAllSelected, getSelectedCount as boardGetSelectedCount, addFromApi as boardAddFromApi, setElementGeo as boardSetElementGeo, setElementParent as boardSetElementParent, getElementById as boardGetElementById, getChildrenOf as boardGetChildrenOf, setSelection as boardSetSelection, zoomIn as boardZoomIn, zoomOut as boardZoomOut, fitView as boardFitView, setViewport as boardSetViewport, worldToScreen as boardWorldToScreen, isEditing as boardIsEditing, getFlowsTouchingAny as boardGetFlowsTouchingAny, placeImage as boardPlaceImage, getCanvasCenterWorld as boardGetCanvasCenterWorld, readImageFile as boardReadImageFile } from './board.js';
+import { assetUrl, mediaUpload } from './media.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -624,12 +625,17 @@ function ipRenderText(rec) {
 function ipRenderImage(rec) {
   if (rec.type !== 'image') return '';
   const a = rec.attrs || {};
-  const src = a.src || '';
+  const sourceLabel = a.asset_id ? 'asset_id' : 'src';
+  const sourceVal = a.asset_id || a.src || '';
+  const lock = a.lockAspect !== false;
   return `
     <div class="ip-section">
       <h4>Image</h4>
-      <div class="ip-row"><label>src</label>
-        <span class="ip-val" data-copy="${ipEsc(src)}" title="${ipEsc(src)}">${ipEsc(ipPreview(src, 60))}</span>
+      <div class="ip-row"><label>${sourceLabel}</label>
+        <span class="ip-val" data-copy="${ipEsc(sourceVal)}" title="${ipEsc(sourceVal)}">${ipEsc(ipPreview(sourceVal, 60))}</span>
+      </div>
+      <div class="ip-row"><label>aspect</label>
+        <span><label class="ip-check"><input type="checkbox" id="ip-image-lock-aspect" data-id="${rec.id}" ${lock ? 'checked' : ''}/> Сохранять пропорции</label></span>
       </div>
     </div>
   `;
@@ -707,8 +713,9 @@ function ipRecToCss(rec) {
     `width: ${Math.round(rec.w)}px;`,
     `height: ${Math.round(rec.h)}px;`,
   ];
-  if (rec.type === 'image' && a.src) {
-    lines.push(`background-image: url(${a.src});`);
+  const imgHref = rec.type === 'image' ? (a.asset_id ? assetUrl(a.asset_id) : a.src) : '';
+  if (rec.type === 'image' && imgHref) {
+    lines.push(`background-image: url(${imgHref});`);
     lines.push('background-size: cover;');
     lines.push('background-position: center;');
   } else if (a.fill != null && a.fill !== 'none') {
@@ -821,6 +828,19 @@ function renderInspectPanel() {
   inspectBody.innerHTML = body + ipRenderCssFooter(selected);
   ipAttachCopyHandlers();
   ipAttachCssCopy();
+  ipAttachImageLockAspect();
+}
+
+function ipAttachImageLockAspect() {
+  const cb = inspectBody.querySelector('#ip-image-lock-aspect');
+  if (!cb) return;
+  cb.addEventListener('change', () => {
+    const rec = boardGetElementById(cb.dataset.id);
+    if (!rec) return;
+    const before = { lockAspect: rec.attrs?.lockAspect };
+    const after = { lockAspect: cb.checked };
+    commitAttrChange(rec, before, after);
+  });
 }
 
 // ── Board undo / redo ─────────────────────────────────────────────────────────
@@ -933,8 +953,22 @@ document.addEventListener('copy', (e) => {
 
 document.addEventListener('paste', async (e) => {
   if (isEditableTarget(e.target)) return;
+  if (!currentBoardId) return;
+
   const json = e.clipboardData.getData(CLIP_MIME);
-  if (!json || !currentBoardId) return;
+  if (!json) {
+    const items = e.clipboardData?.items || [];
+    for (const item of items) {
+      if (item.kind === 'file' && item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (!file) continue;
+        e.preventDefault();
+        await pasteImageFromClipboard(file);
+        return;
+      }
+    }
+    return;
+  }
   e.preventDefault();
 
   let payload;
@@ -978,6 +1012,22 @@ document.addEventListener('paste', async (e) => {
 
   setStatus(`Вставлено ${records.length} элементов`);
 });
+
+async function pasteImageFromClipboard(file) {
+  const res = await boardReadImageFile(file);
+  if (res.error) { setStatus(res.error, true); return; }
+  let uploaded;
+  try {
+    uploaded = await mediaUpload(res.file);
+  } catch (e) {
+    setStatus(`Не удалось загрузить картинку: ${e.message}`, true);
+    return;
+  }
+  const c = boardGetCanvasCenterWorld();
+  const rec = boardPlaceImage(c.x - res.w / 2, c.y - res.h / 2, { assetId: uploaded.id }, res.w, res.h);
+  if (rec) boardSetSelection([rec]);
+  setStatus('Картинка вставлена');
+}
 
 async function eraseElements(ids) {
   if (!currentBoardId || !ids.length) return;
@@ -1249,20 +1299,192 @@ async function loadBoards() {
   }
 }
 
+let openSwipedWrap = null;
+
+function closeSwipedWrap() {
+  if (openSwipedWrap) {
+    openSwipedWrap.classList.remove('swiped');
+    openSwipedWrap = null;
+  }
+}
+
 function renderBoardsList() {
   const list = document.getElementById('board-list');
   list.innerHTML = '';
+  openSwipedWrap = null;
   if (!allBoards.length) {
     list.innerHTML = '<div class="hint">Нет досок</div>';
     return;
   }
   for (const b of allBoards) {
+    const wrap = document.createElement('div');
+    wrap.className = 'board-item-wrap';
+    wrap.dataset.id = b.id;
+
+    const actions = document.createElement('div');
+    actions.className = 'board-item-actions';
+    const delBtn = document.createElement('button');
+    delBtn.className = 'board-item-delete';
+    delBtn.type = 'button';
+    delBtn.textContent = 'Удалить';
+    delBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      deleteBoardAction(b.id);
+    });
+    actions.appendChild(delBtn);
+    wrap.appendChild(actions);
+
     const item = document.createElement('div');
     item.className = 'board-item' + (b.id === currentBoardId ? ' active' : '');
     item.textContent = b.title || 'Без названия';
-    item.addEventListener('click', () => { openBoard(b.id); closeSidebar(); });
-    list.appendChild(item);
+    item.addEventListener('click', () => {
+      if (item.dataset.swipeHandled === '1') { delete item.dataset.swipeHandled; return; }
+      if (wrap.classList.contains('swiped')) { closeSwipedWrap(); return; }
+      if (openSwipedWrap) { closeSwipedWrap(); return; }
+      openBoard(b.id); closeSidebar();
+    });
+    item.addEventListener('dblclick', e => {
+      if (b.id !== currentBoardId) return;
+      if (wrap.classList.contains('swiped')) return;
+      e.preventDefault();
+      startBoardRename(item, b);
+    });
+    attachSwipeToDelete(wrap, item);
+    wrap.appendChild(item);
+    list.appendChild(wrap);
   }
+}
+
+function attachSwipeToDelete(wrap, item) {
+  const OPEN_OFFSET = 90;
+  const THRESHOLD_OPEN = Math.round(OPEN_OFFSET * 0.7);
+  const AXIS_LOCK = 6;
+  let startX = 0, startY = 0;
+  let axis = null;
+  let startedSwiped = false;
+  let onMove = null;
+  let onUp = null;
+
+  item.addEventListener('pointerdown', e => {
+    if (e.button !== undefined && e.button !== 0) return;
+    if (e.target.closest('.board-item-input, .board-item-delete')) return;
+    startX = e.clientX;
+    startY = e.clientY;
+    axis = null;
+    startedSwiped = wrap.classList.contains('swiped');
+    item.style.transition = 'none';
+
+    onMove = ev => {
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      if (axis === null) {
+        if (Math.abs(dx) < AXIS_LOCK && Math.abs(dy) < AXIS_LOCK) return;
+        if (Math.abs(dx) <= Math.abs(dy)) { detach(); item.style.transition = ''; return; }
+        axis = 'x';
+      }
+      let offset = (startedSwiped ? -OPEN_OFFSET : 0) + dx;
+      if (offset > 0) offset = 0;
+      if (offset < -OPEN_OFFSET) offset = -OPEN_OFFSET - (offset + OPEN_OFFSET) * 0.2;
+      item.style.transform = `translateX(${offset}px)`;
+    };
+
+    onUp = ev => {
+      const wasX = axis === 'x';
+      const dx = ev.clientX - startX;
+      detach();
+      item.style.transition = '';
+      item.style.transform = '';
+      if (!wasX) return;
+      item.dataset.swipeHandled = '1';
+      if (startedSwiped) {
+        if (dx > THRESHOLD_OPEN) {
+          wrap.classList.remove('swiped');
+          if (openSwipedWrap === wrap) openSwipedWrap = null;
+        }
+      } else {
+        if (dx < -THRESHOLD_OPEN) {
+          closeSwipedWrap();
+          wrap.classList.add('swiped');
+          openSwipedWrap = wrap;
+        }
+      }
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+  });
+
+  function detach() {
+    if (onMove) window.removeEventListener('pointermove', onMove);
+    if (onUp) {
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+    }
+    onMove = null;
+    onUp = null;
+  }
+}
+
+async function deleteBoardAction(id) {
+  try {
+    await api.deleteBoard(id);
+  } catch (e) {
+    setStatus(`Не удалось удалить доску: ${e.message}`, true);
+    return;
+  }
+  allBoards = allBoards.filter(b => b.id !== id);
+  if (currentBoardId === id) {
+    currentBoardId = null;
+    clearBoard();
+    clearUndo();
+    if (allBoards.length) {
+      await openBoard(allBoards[0].id);
+    } else {
+      await createBoard('Доска 1');
+    }
+  } else {
+    renderBoardsList();
+  }
+  setStatus('Доска удалена');
+}
+
+function startBoardRename(item, board) {
+  if (item.querySelector('.board-item-input')) return;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'board-item-input';
+  input.value = board.title || '';
+  item.textContent = '';
+  item.appendChild(input);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const commit = async () => {
+    if (done) return; done = true;
+    const next = input.value.trim();
+    const prev = board.title || '';
+    if (!next || next === prev) { renderBoardsList(); return; }
+    try {
+      const updated = await api.patchBoard(board.id, { title: next, updatedAt: Date.now() });
+      const idx = allBoards.findIndex(x => x.id === board.id);
+      if (idx >= 0) allBoards[idx] = updated;
+      renderBoardsList();
+    } catch (err) {
+      setStatus(`Не удалось переименовать: ${err.message}`, true);
+      renderBoardsList();
+    }
+  };
+  const cancel = () => { if (done) return; done = true; renderBoardsList(); };
+
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+  });
+  input.addEventListener('blur', commit);
+  input.addEventListener('click', e => e.stopPropagation());
+  input.addEventListener('dblclick', e => e.stopPropagation());
 }
 
 async function openBoard(id) {

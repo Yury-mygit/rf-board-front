@@ -128,18 +128,55 @@ body.board-on #board { display: flex; }
   overflow-y: auto;
   padding: 4px 0;
 }
+.board-item-wrap {
+  position: relative;
+  overflow: hidden;
+  touch-action: pan-y;
+}
+.board-item-actions {
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  display: flex;
+  align-items: stretch;
+}
+.board-item-delete {
+  background: #c92a2a;
+  color: #fff;
+  border: 0;
+  padding: 0 16px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+}
+.board-item-delete:hover { background: #a51919; }
 .board-item {
+  position: relative;
   padding: 8px 12px;
   cursor: pointer;
   font-size: 14px;
   color: var(--text);
   border-left: 3px solid transparent;
+  background: var(--surface);
+  transform: translateX(0);
+  transition: transform 0.18s ease;
+  user-select: none;
 }
 .board-item:hover { background: var(--bg); }
 .board-item.active {
   background: var(--bg);
   border-left-color: var(--accent);
   font-weight: 500;
+}
+.board-item-wrap.swiped .board-item { transform: translateX(-90px); }
+.board-item-input {
+  width: 100%;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  font: inherit;
+  color: inherit;
 }
 
 .board-content {
@@ -717,6 +754,32 @@ body.board-sidebar-open .board-sidebar-backdrop { display: block; }
 }
 .inspect-panel .ip-row .ip-val:hover { background: rgba(255,255,255,0.06); }
 .inspect-panel .ip-row .ip-val.flash { background: var(--accent); color: #fff; }
+.inspect-panel .ip-row .ip-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 11px;
+}
+.inspect-panel .ip-row .ip-check input { margin: 0; cursor: pointer; }
+
+.board-image-placeholder { pointer-events: none; }
+.board-image-placeholder .image-ph-rect {
+  fill: #f1f3f5;
+  stroke: #adb5bd;
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+}
+.board-image-placeholder .image-ph-icon {
+  fill: none;
+  stroke: #868e96;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.board-image-placeholder .image-ph-icon circle { fill: #868e96; }
 .inspect-panel .ip-swatch {
   display: inline-block;
   width: 14px;

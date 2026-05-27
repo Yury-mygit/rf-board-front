@@ -10,6 +10,7 @@ import {
   ensureBpmnDefs, createBpmnShape, applyBpmnShapeGeo, applyBpmnShapeAttrs,
   createBpmnFlow, updateBpmnFlow, normalizeBpmnGeo,
 } from './bpmn.js';
+import { assetUrl, mediaUpload } from './media.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -469,6 +470,9 @@ export function clearBoard() {
   for (const node of [...svg.querySelectorAll('[data-id]')]) {
     node.remove();
   }
+  for (const ph of [...svg.querySelectorAll('[data-image-placeholder]')]) {
+    ph.remove();
+  }
   if (handlesG) {
     hideHandles();
     svg.appendChild(handlesG);
@@ -532,6 +536,8 @@ function renderFromApi(e) {
     return;
   }
   if (e.type === 'image') {
+    const placeholder = createImagePlaceholder(e.x, e.y, e.w, e.h);
+    svg.appendChild(placeholder);
     const node = document.createElementNS(SVG_NS, 'image');
     node.classList.add('board-shape');
     node.dataset.type = 'image';
@@ -539,8 +545,11 @@ function renderFromApi(e) {
     node.setAttribute('y', e.y);
     node.setAttribute('width', e.w);
     node.setAttribute('height', e.h);
-    svg.appendChild(node);
     const rec = register({ id: e.id, type: 'image', node, x: e.x, y: e.y, w: e.w, h: e.h, attrs, parentId });
+    rec._placeholder = placeholder;
+    node.addEventListener('load', () => removeImagePlaceholder(rec), { once: true });
+    node.addEventListener('error', () => removeImagePlaceholder(rec), { once: true });
+    svg.appendChild(node);
     applyElementAttrs(rec);
     return;
   }
@@ -742,6 +751,7 @@ function onDown(e) {
     if (tool === 'text') { placeText(p.x, p.y); onToolUsed(); e.preventDefault(); return; }
     if (tool === 'note') { placeNote(p.x, p.y); onToolUsed(); e.preventDefault(); return; }
     if (tool === 'image') { promptAndPlaceImage(p.x, p.y); onToolUsed(); e.preventDefault(); return; }
+    if (tool === 'image-file') { pickFileAndPlaceImage(p.x, p.y); onToolUsed(); e.preventDefault(); return; }
     if (tool === 'bpmn_flow') {
       const target = findShape(e.target);
       const ok = target && isBpmnShape(target.type);
@@ -876,6 +886,30 @@ function onMove(e) {
       if (r.handle.includes('n')) ny = bottom - s;
       nw = s; nh = s;
     }
+    // image — пропорции: угловой handle всегда; боковой — только если lockAspect.
+    if (r.el.type === 'image') {
+      const a = r.el.attrs || {};
+      const corner = r.handle.length === 2;
+      const lock = a.lockAspect !== false;
+      if (corner || lock) {
+        const aspect = a.aspectRatio || (r.oldW / r.oldH) || 1;
+        if (corner) {
+          // Управляющая ось — та, где смещение мыши «больше» относительно aspect.
+          if (nw / nh > aspect) nw = nh * aspect;
+          else nh = nw / aspect;
+          if (r.handle.includes('w')) nx = right - nw;
+          if (r.handle.includes('n')) ny = bottom - nh;
+        } else if (r.handle === 'e' || r.handle === 'w') {
+          const cy = r.oldY + r.oldH / 2;
+          nh = nw / aspect;
+          ny = cy - nh / 2;
+        } else if (r.handle === 'n' || r.handle === 's') {
+          const cx = r.oldX + r.oldW / 2;
+          nw = nh * aspect;
+          nx = cx - nw / 2;
+        }
+      }
+    }
     r.el.x = nx; r.el.y = ny; r.el.w = nw; r.el.h = nh;
     if (isBpmnShape(r.el.type)) {
       applyBpmnShapeGeo(r.el.node, r.el.type, nx, ny, nw, nh);
@@ -883,6 +917,7 @@ function onMove(e) {
     } else {
       setRectAttrs(r.el.node, nx, ny, nw, nh);
     }
+    if (r.el.type === 'image') syncImagePlaceholder(r.el);
     updateHandles(r.el);
     if (getOnlySelected() === r.el) onSelectionChanged(r.el, bboxOf(r.el));
     return;
@@ -1174,7 +1209,11 @@ export function applyElementAttrs(rec) {
     return;
   }
   if (rec.type === 'image') {
-    if (a.src !== undefined) rec.node.setAttribute('href', a.src || '');
+    // Источник: asset_id (новый путь через media-сервис) или src (legacy).
+    let href = '';
+    if (a.asset_id) href = assetUrl(a.asset_id);
+    else if (a.src) href = a.src;
+    rec.node.setAttribute('href', href);
     const fit = a.fit || 'cover';
     const par = fit === 'contain' ? 'xMidYMid meet'
               : fit === 'fill' ? 'none'
@@ -1330,6 +1369,7 @@ function moveBy(el, dx, dy) {
   if (el.type === 'rect' || el.type === 'image') {
     el.node.setAttribute('x', el.x);
     el.node.setAttribute('y', el.y);
+    if (el.type === 'image') syncImagePlaceholder(el);
     return;
   }
   if (el.type === 'frame') {
@@ -1418,6 +1458,7 @@ export function removeElements(ids) {
     if (move && move.el === rec) move = null;
     if (resize && resize.el === rec) resize = null;
     if (rec.node && rec.node.parentNode) rec.node.parentNode.removeChild(rec.node);
+    if (rec._placeholder) { rec._placeholder.remove(); rec._placeholder = null; }
   }
   elements = remaining;
   if (touchedSelection) notifySelectionChanged();
@@ -1434,6 +1475,7 @@ function applyGeo(rec) {
   }
   if (rec.type === 'rect' || rec.type === 'frame' || rec.type === 'image') {
     setRectAttrs(rec.node, rec.x, rec.y, rec.w, rec.h);
+    if (rec.type === 'image') syncImagePlaceholder(rec);
     return;
   }
   if (isBpmnShape(rec.type)) {
@@ -1618,30 +1660,158 @@ function placeText(x, y, opts = {}) {
   return rec;
 }
 
-function promptAndPlaceImage(x, y) {
-  const url = window.prompt('URL картинки (https://…):');
-  if (!url) return null;
-  const W = 200, H = 150;
+export function getCanvasCenterWorld() {
+  if (!svg) return { x: 0, y: 0 };
+  const r = svg.getBoundingClientRect();
+  return screenToWorld(r.left + r.width / 2, r.top + r.height / 2);
+}
+
+export function placeImage(x, y, source, w, h) {
+  return placeImageAt(x, y, source, w, h);
+}
+
+// source: либо строка (внешний URL / legacy data:), либо `{ assetId }`.
+// Новые upload'ы используют asset_id, старые элементы из БД — могут содержать
+// attrs.src (legacy dataURL или https://). applyElementAttrs выбирает.
+function placeImageAt(x, y, source, w, h) {
+  const placeholder = createImagePlaceholder(x, y, w, h);
+  svg.appendChild(placeholder);
   const node = document.createElementNS(SVG_NS, 'image');
   node.setAttribute('x', x);
   node.setAttribute('y', y);
-  node.setAttribute('width', W);
-  node.setAttribute('height', H);
-  node.setAttribute('href', url);
+  node.setAttribute('width', w);
+  node.setAttribute('height', h);
   node.setAttribute('preserveAspectRatio', 'xMidYMid slice');
-  svg.appendChild(node);
+  const attrs = { fit: 'cover', lockAspect: true, aspectRatio: w / h };
+  if (source && typeof source === 'object' && source.assetId) {
+    attrs.asset_id = source.assetId;
+  } else if (typeof source === 'string' && source) {
+    attrs.src = source;
+  }
   const rec = register({
     id: uuid(),
     type: 'image',
     node,
-    x, y, w: W, h: H,
-    attrs: { src: url, fit: 'cover' },
+    x, y, w, h,
+    attrs,
     parentId: null,
   });
+  rec._placeholder = placeholder;
+  node.addEventListener('load', () => removeImagePlaceholder(rec), { once: true });
+  node.addEventListener('error', () => removeImagePlaceholder(rec), { once: true });
+  applyElementAttrs(rec);
+  svg.appendChild(node);
   const f = frameContaining(rec);
   if (f) rec.parentId = f.id;
   onElementCreated(rec);
   return rec;
+}
+
+function createImagePlaceholder(x, y, w, h) {
+  const g = document.createElementNS(SVG_NS, 'g');
+  g.classList.add('board-image-placeholder');
+  g.setAttribute('data-image-placeholder', '');
+  const rect = document.createElementNS(SVG_NS, 'rect');
+  rect.classList.add('image-ph-rect');
+  g.appendChild(rect);
+  const icon = document.createElementNS(SVG_NS, 'g');
+  icon.classList.add('image-ph-icon');
+  const iRect = document.createElementNS(SVG_NS, 'rect');
+  iRect.setAttribute('x', 0); iRect.setAttribute('y', 0);
+  iRect.setAttribute('width', 24); iRect.setAttribute('height', 18);
+  iRect.setAttribute('rx', 2);
+  icon.appendChild(iRect);
+  const iCircle = document.createElementNS(SVG_NS, 'circle');
+  iCircle.setAttribute('cx', 8); iCircle.setAttribute('cy', 7); iCircle.setAttribute('r', 1.6);
+  icon.appendChild(iCircle);
+  const iPath = document.createElementNS(SVG_NS, 'path');
+  iPath.setAttribute('d', 'M2 16 L8 10 L12 14 L17 9 L22 14');
+  icon.appendChild(iPath);
+  g.appendChild(icon);
+  g._rect = rect;
+  g._icon = icon;
+  applyImagePlaceholderGeo(g, x, y, w, h);
+  return g;
+}
+
+function applyImagePlaceholderGeo(ph, x, y, w, h) {
+  ph._rect.setAttribute('x', x);
+  ph._rect.setAttribute('y', y);
+  ph._rect.setAttribute('width', w);
+  ph._rect.setAttribute('height', h);
+  const ICON_W = 24, ICON_H = 18;
+  const show = Math.min(w, h) >= 32;
+  ph._icon.style.display = show ? '' : 'none';
+  if (show) {
+    const tx = x + (w - ICON_W) / 2;
+    const ty = y + (h - ICON_H) / 2;
+    ph._icon.setAttribute('transform', `translate(${tx}, ${ty})`);
+  }
+}
+
+function syncImagePlaceholder(rec) {
+  if (rec._placeholder) applyImagePlaceholderGeo(rec._placeholder, rec.x, rec.y, rec.w, rec.h);
+}
+
+function removeImagePlaceholder(rec) {
+  if (!rec._placeholder) return;
+  rec._placeholder.remove();
+  rec._placeholder = null;
+}
+
+function promptAndPlaceImage(x, y) {
+  const url = window.prompt('URL картинки (https://…):');
+  if (!url) return null;
+  return placeImageAt(x, y, url, 200, 150);
+}
+
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // == backend media (single source)
+const IMAGE_MAX_SIDE = 400;
+
+// Читает file → возвращает размеры для placement (без base64). Сам upload —
+// через mediaUpload в pickFileAndPlaceImage / pasteImageFromClipboard.
+export async function readImageFile(file, { maxBytes = MAX_UPLOAD_BYTES, maxSide = IMAGE_MAX_SIDE } = {}) {
+  if (file.size > maxBytes) {
+    const mb = (maxBytes / 1024 / 1024).toFixed(0);
+    return { error: `Файл слишком большой (${(file.size / 1024 / 1024).toFixed(1)} МБ). Лимит — ${mb} МБ.` };
+  }
+  const objectUrl = URL.createObjectURL(file);
+  const dim = await new Promise(resolve => {
+    const probe = new Image();
+    probe.onload = () => resolve({ w: probe.naturalWidth || 200, h: probe.naturalHeight || 150 });
+    probe.onerror = () => resolve(null);
+    probe.src = objectUrl;
+  });
+  URL.revokeObjectURL(objectUrl);
+  if (!dim) return { error: 'Не удалось прочитать изображение.' };
+  let { w, h } = dim;
+  if (w > maxSide || h > maxSide) {
+    const k = maxSide / Math.max(w, h);
+    w = Math.round(w * k);
+    h = Math.round(h * k);
+  }
+  return { file, w, h };
+}
+
+function pickFileAndPlaceImage(x, y) {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = 'image/*';
+  inp.addEventListener('change', async () => {
+    const file = inp.files?.[0];
+    if (!file) return;
+    const res = await readImageFile(file);
+    if (res.error) { alert(res.error); return; }
+    let uploaded;
+    try {
+      uploaded = await mediaUpload(res.file);
+    } catch (e) {
+      alert(`Не удалось загрузить картинку: ${e.message}`);
+      return;
+    }
+    placeImageAt(x, y, { assetId: uploaded.id }, res.w, res.h);
+  });
+  inp.click();
 }
 
 function placeNote(x, y, opts = {}) {
