@@ -521,10 +521,17 @@ function _patchInPlace(rec, e) {
   rec.attrs = attrs;
   rec.parentId = e.parentId || null;
   // Cascade: если backend сказал что frame двинулся на (cascade_dx, cascade_dy),
-  // фронт сам translate'ит всех потомков рекурсивно — одна синхронная
-  // анимация для всей группы.
+  // фронт translate'ит всех потомков. НО: если frame у нас уже на
+  // (e.x, e.y) — значит юзер сам drag'ом двинул и frame, и детей
+  // (drag-move в move-handler двигает children тоже), и cascade приведёт
+  // к УДВОЕНИЮ. Echo-suppression: применяем cascade только если frame
+  // ещё не на новых координатах.
   if ((e._cascadeDx || e._cascadeDy) && rec.type === 'frame') {
-    _cascadeMoveChildren(rec.id, e._cascadeDx || 0, e._cascadeDy || 0);
+    const frameDx = e.x - rec.x;
+    const frameDy = e.y - rec.y;
+    if (Math.abs(frameDx) > 0.5 || Math.abs(frameDy) > 0.5) {
+      _cascadeMoveChildren(rec.id, e._cascadeDx || 0, e._cascadeDy || 0);
+    }
   }
   // Универсальный подход: сдвиг через (dx, dy) translate всех внутренних
   // координатных атрибутов. Работает для frame/rect/text/note/image/line —
