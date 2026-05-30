@@ -1,4 +1,4 @@
-import { initBoard, setBoardCursor, loadBoard, clearBoard, applyElementAttrs, deselect as boardDeselect, removeElements as boardRemoveElements, exitEdit as boardExitEdit, getAllSelected as boardGetAllSelected, getSelectedCount as boardGetSelectedCount, addFromApi as boardAddFromApi, upsertFromApi as boardUpsertFromApi, removeFromApi as boardRemoveFromApi, setElementGeo as boardSetElementGeo, setElementParent as boardSetElementParent, getElementById as boardGetElementById, getChildrenOf as boardGetChildrenOf, setSelection as boardSetSelection, zoomIn as boardZoomIn, zoomOut as boardZoomOut, fitView as boardFitView, setViewport as boardSetViewport, worldToScreen as boardWorldToScreen, isEditing as boardIsEditing, getFlowsTouchingAny as boardGetFlowsTouchingAny, placeImage as boardPlaceImage, getCanvasCenterWorld as boardGetCanvasCenterWorld, readImageFile as boardReadImageFile } from './board.js';
+import { initBoard, setBoardCursor, loadBoard, clearBoard, applyElementAttrs, deselect as boardDeselect, removeElements as boardRemoveElements, exitEdit as boardExitEdit, getAllSelected as boardGetAllSelected, getSelectedCount as boardGetSelectedCount, addFromApi as boardAddFromApi, upsertFromApi as boardUpsertFromApi, removeFromApi as boardRemoveFromApi, getAllElements as boardGetAllElements, setElementGeo as boardSetElementGeo, setElementParent as boardSetElementParent, getElementById as boardGetElementById, getChildrenOf as boardGetChildrenOf, setSelection as boardSetSelection, zoomIn as boardZoomIn, zoomOut as boardZoomOut, fitView as boardFitView, setViewport as boardSetViewport, worldToScreen as boardWorldToScreen, isEditing as boardIsEditing, getFlowsTouchingAny as boardGetFlowsTouchingAny, placeImage as boardPlaceImage, getCanvasCenterWorld as boardGetCanvasCenterWorld, readImageFile as boardReadImageFile } from './board.js';
 import { assetUrl, mediaUpload } from './media.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -184,15 +184,12 @@ function buildContextMenu() {
   // ── Z-order кнопки (общие для всех типов) ──
   const frontBtn = document.getElementById('ctx-to-front-btn');
   const backBtn = document.getElementById('ctx-to-back-btn');
-  console.log('[z-order] buttons:', !!frontBtn, !!backBtn);
   if (frontBtn) frontBtn.addEventListener('click', e => {
     e.stopPropagation();
-    console.log('[z-order] front click, target=', ctxMenuTarget?.id, ctxMenuTarget?.type);
     if (ctxMenuTarget) zOrderChange(ctxMenuTarget, 'front');
   });
   if (backBtn) backBtn.addEventListener('click', e => {
     e.stopPropagation();
-    console.log('[z-order] back click, target=', ctxMenuTarget?.id, ctxMenuTarget?.type);
     if (ctxMenuTarget) zOrderChange(ctxMenuTarget, 'back');
   });
 
@@ -1299,14 +1296,14 @@ function scheduleElementSave(rec) {
 // PATCH z_index, DOM перенесён сразу (appendChild / insertBefore) — анимации
 // нет, эффект мгновенный (SSE echo придёт с тем же z_index, no-op).
 async function zOrderChange(rec, where) {
-  console.log('[z-order] zOrderChange called', where, 'rec.id=', rec.id, 'boardId=', currentBoardId);
   if (!currentBoardId) return;
   const boardId = currentBoardId;
+  const all = boardGetAllElements();
   let newZ;
   if (where === 'front') {
-    newZ = Math.max(...elements.map(e => e.z_index || 0)) + 1;
+    newZ = Math.max(...all.map(e => e.z_index || 0)) + 1;
   } else {
-    newZ = Math.min(...elements.map(e => e.z_index || 0)) - 1;
+    newZ = Math.min(...all.map(e => e.z_index || 0)) - 1;
   }
   rec.z_index = newZ;
   // Локальный DOM-reorder: в SVG порядок = z-order.

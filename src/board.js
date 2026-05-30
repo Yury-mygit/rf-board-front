@@ -491,6 +491,9 @@ export function loadBoard(apiElements) {
   for (const e of apiElements) renderFromApi(e);
 }
 
+// Snapshot всех текущих элементов (state). Для main.js — z-order min/max.
+export function getAllElements() { return elements; }
+
 // Удалить элемент по id из state и DOM (карта #36 live updates).
 export function removeFromApi(id) {
   const idx = elements.findIndex(e => e.id === id);
