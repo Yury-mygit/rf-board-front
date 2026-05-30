@@ -1,4 +1,4 @@
-import { initBoard, setBoardCursor, loadBoard, clearBoard, applyElementAttrs, deselect as boardDeselect, removeElements as boardRemoveElements, exitEdit as boardExitEdit, getAllSelected as boardGetAllSelected, getSelectedCount as boardGetSelectedCount, addFromApi as boardAddFromApi, setElementGeo as boardSetElementGeo, setElementParent as boardSetElementParent, getElementById as boardGetElementById, getChildrenOf as boardGetChildrenOf, setSelection as boardSetSelection, zoomIn as boardZoomIn, zoomOut as boardZoomOut, fitView as boardFitView, setViewport as boardSetViewport, worldToScreen as boardWorldToScreen, isEditing as boardIsEditing, getFlowsTouchingAny as boardGetFlowsTouchingAny, placeImage as boardPlaceImage, getCanvasCenterWorld as boardGetCanvasCenterWorld, readImageFile as boardReadImageFile } from './board.js';
+import { initBoard, setBoardCursor, loadBoard, clearBoard, applyElementAttrs, deselect as boardDeselect, removeElements as boardRemoveElements, exitEdit as boardExitEdit, getAllSelected as boardGetAllSelected, getSelectedCount as boardGetSelectedCount, addFromApi as boardAddFromApi, upsertFromApi as boardUpsertFromApi, removeFromApi as boardRemoveFromApi, setElementGeo as boardSetElementGeo, setElementParent as boardSetElementParent, getElementById as boardGetElementById, getChildrenOf as boardGetChildrenOf, setSelection as boardSetSelection, zoomIn as boardZoomIn, zoomOut as boardZoomOut, fitView as boardFitView, setViewport as boardSetViewport, worldToScreen as boardWorldToScreen, isEditing as boardIsEditing, getFlowsTouchingAny as boardGetFlowsTouchingAny, placeImage as boardPlaceImage, getCanvasCenterWorld as boardGetCanvasCenterWorld, readImageFile as boardReadImageFile } from './board.js';
 import { assetUrl, mediaUpload } from './media.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -1280,6 +1280,39 @@ function scheduleElementSave(rec) {
   }, 1000));
 }
 
+// SSE-канал live-обновлений доски (карта #36 board-live-updates).
+// Открывается после loadBoard'а; payload — {type, element?, element_id?, ts}.
+// При смене доски / отключении свежий subscriber заменяет старый.
+let _liveES = null;
+function subscribeBoardEvents(boardId) {
+  if (_liveES) { try { _liveES.close(); } catch {} _liveES = null; }
+  if (!boardId) return;
+  const es = new EventSource(`${BASE}/boards/${boardId}/events`);
+  _liveES = es;
+  es.onmessage = (e) => {
+    let payload;
+    try { payload = JSON.parse(e.data); } catch { return; }
+    const t = payload.type;
+    if (t === 'element_upserted' || t === 'element_patched') {
+      if (payload.element && payload.element.board_id === boardId) {
+        const el = payload.element;
+        // конвертация snake_case → camelCase для совместимости с board.js
+        boardUpsertFromApi({
+          id: el.id, type: el.type, parentId: el.parent_id,
+          x: el.x, y: el.y, w: el.w, h: el.h, attrs: el.attrs,
+        });
+      }
+    } else if (t === 'element_deleted') {
+      if (payload.element_id) boardRemoveFromApi(payload.element_id);
+    }
+    // board_patched / board_created / board_deleted — пока не обрабатываем
+    // (UI-список досок остаётся ручным).
+  };
+  es.onerror = () => {
+    // EventSource сам ретрейет через retry: 5000 (выставлен backend'ом).
+  };
+}
+
 async function loadBoards() {
   try {
     allBoards = await api.boards();
@@ -1291,6 +1324,7 @@ async function loadBoards() {
       renderBoardsList();
       const full = await api.board(first.id);
       loadBoard(full.elements || []);
+      subscribeBoardEvents(first.id);
       if (!restoreViewport(first.id)) boardFitView();
       clearUndo();
     }
@@ -1494,6 +1528,7 @@ async function openBoard(id) {
   try {
     const full = await api.board(id);
     loadBoard(full.elements || []);
+    subscribeBoardEvents(id);
     if (!restoreViewport(id)) boardFitView();
     clearUndo();
   } catch (e) {

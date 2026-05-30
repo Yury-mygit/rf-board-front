@@ -491,6 +491,28 @@ export function loadBoard(apiElements) {
   for (const e of apiElements) renderFromApi(e);
 }
 
+// Удалить элемент по id из state и DOM (карта #36 live updates).
+export function removeFromApi(id) {
+  const idx = elements.findIndex(e => e.id === id);
+  if (idx < 0) return false;
+  const rec = elements[idx];
+  if (rec.node && rec.node.parentNode) rec.node.parentNode.removeChild(rec.node);
+  if (rec._placeholder && rec._placeholder.parentNode) rec._placeholder.parentNode.removeChild(rec._placeholder);
+  elements.splice(idx, 1);
+  selectedIds.delete(id);
+  return true;
+}
+
+// Upsert: удаляет существующий по id (если есть) и создаёт заново из API
+// payload. Простой подход — recreate вместо in-place patch — упрощает
+// type-specific логику (line/image/bpmn). При следующей итерации можно
+// сделать in-place patch для гладкого UX.
+export function upsertFromApi(e) {
+  if (!e || !e.id) return;
+  removeFromApi(e.id);
+  renderFromApi(e);
+}
+
 // Добавить элемент из API-формата (используется при redo create / undo delete).
 export function addFromApi(e) {
   renderFromApi(e);
