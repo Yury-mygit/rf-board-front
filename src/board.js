@@ -1238,7 +1238,15 @@ function onUp(e) {
       const newParentId = newParent ? newParent.id : null;
       if (newParentId !== el.parentId) {
         el.parentId = newParentId;
-        onElementChanged(el);
+        // Immediate flush: backend cascade-move на drag frame'а идёт по
+        // DB.parent_id. Если PATCH parent_id остаётся в debounce, ребёнок
+        // визуально «вытащен», но в БД ещё child — следующий drag frame'а
+        // двинет его. Принудительный flush гарантирует синхрон.
+        if (typeof window.__flushElementSave === 'function') {
+          window.__flushElementSave(el);
+        } else {
+          onElementChanged(el);
+        }
       }
     }
     setFrameTarget(null);
@@ -1716,12 +1724,22 @@ function recomputeChildrenAfterResize(frame) {
     if (el.parentId === frame.id) {
       if (!fullyInside) {
         el.parentId = null;
-        onElementChanged(el);
+        // Immediate flush — backend cascade на следующем drag frame'а
+        // должен видеть актуальный parent_id.
+        if (typeof window.__flushElementSave === 'function') {
+          window.__flushElementSave(el);
+        } else {
+          onElementChanged(el);
+        }
       }
     } else if (el.parentId == null) {
       if (fullyInside) {
         el.parentId = frame.id;
-        onElementChanged(el);
+        if (typeof window.__flushElementSave === 'function') {
+          window.__flushElementSave(el);
+        } else {
+          onElementChanged(el);
+        }
       }
     }
     // если el.parentId — другой фрейм, не трогаем

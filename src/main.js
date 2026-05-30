@@ -1280,6 +1280,28 @@ function scheduleElementSave(rec) {
   }, 1000));
 }
 
+// Immediate flush (без debounce) — для случаев когда нужно гарантировать
+// что backend знает актуальное состояние до следующего действия.
+// Главный кейс: containment recompute сменил parent_id — следующий
+// drag frame'а должен НЕ двигать вытащенного ребёнка (cascade на
+// backend идёт по DB.parent_id), значит PATCH parent_id=null должен
+// дойти до backend'а до drag-frame'а.
+function flushElementSave(rec) {
+  if (!currentBoardId) return;
+  const boardId = currentBoardId;
+  clearTimeout(elementSaveTimers.get(rec.id));
+  elementSaveTimers.delete(rec.id);
+  const data = {
+    ...recToApiGeometry(rec),
+    parentId: rec.parentId || null,
+    updatedAt: Date.now(),
+  };
+  return api.patchElement(boardId, rec.id, data).catch((e) => {
+    setStatus(`Ошибка сохранения: ${e.message}`, true);
+  });
+}
+window.__flushElementSave = flushElementSave;  // для board.js
+
 // SSE-канал live-обновлений доски (карта #36 board-live-updates).
 // Открывается после loadBoard'а; payload — {type, element?, element_id?, ts}.
 // При смене доски / отключении свежий subscriber заменяет старый.
