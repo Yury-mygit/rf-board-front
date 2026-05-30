@@ -181,6 +181,16 @@ function buildContextMenu() {
 
   document.getElementById('board-context-menu').addEventListener('mousedown', e => e.stopPropagation());
 
+  // ── Z-order кнопки (общие для всех типов) ──
+  document.getElementById('ctx-to-front-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    if (ctxMenuTarget) zOrderChange(ctxMenuTarget, 'front');
+  });
+  document.getElementById('ctx-to-back-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    if (ctxMenuTarget) zOrderChange(ctxMenuTarget, 'back');
+  });
+
   fillBtn.addEventListener('click', e => { e.stopPropagation(); togglePalette('fill'); });
   strokeBtn.addEventListener('click', e => { e.stopPropagation(); togglePalette('stroke'); });
   colorBtn.addEventListener('click', e => { e.stopPropagation(); togglePalette('color'); });
@@ -1280,6 +1290,35 @@ function scheduleElementSave(rec) {
   }, 1000));
 }
 
+// Изменить z-order одного элемента: front → выше всех, back → ниже всех.
+// PATCH z_index, DOM перенесён сразу (appendChild / insertBefore) — анимации
+// нет, эффект мгновенный (SSE echo придёт с тем же z_index, no-op).
+async function zOrderChange(rec, where) {
+  if (!currentBoardId) return;
+  const boardId = currentBoardId;
+  let newZ;
+  if (where === 'front') {
+    newZ = Math.max(...elements.map(e => e.z_index || 0)) + 1;
+  } else {
+    newZ = Math.min(...elements.map(e => e.z_index || 0)) - 1;
+  }
+  rec.z_index = newZ;
+  // Локальный DOM-reorder: в SVG порядок = z-order.
+  const svg = document.querySelector('.board-svg');
+  if (rec.node && svg) {
+    if (where === 'front') svg.appendChild(rec.node);
+    else svg.insertBefore(rec.node, svg.firstChild);
+  }
+  try {
+    await api.patchElement(boardId, rec.id, {
+      zIndex: newZ,
+      updatedAt: Date.now(),
+    });
+  } catch (e) {
+    setStatus(`Ошибка z-order: ${e.message}`, true);
+  }
+}
+
 // Immediate flush (без debounce) — для случаев когда нужно гарантировать
 // что backend знает актуальное состояние до следующего действия.
 // Главный кейс: containment recompute сменил parent_id — следующий
@@ -1323,6 +1362,7 @@ function subscribeBoardEvents(boardId) {
         boardUpsertFromApi({
           id: el.id, type: el.type, parentId: el.parent_id,
           x: el.x, y: el.y, w: el.w, h: el.h, attrs: el.attrs,
+          zIndex: el.z_index,
           _cascadeDx: el.cascade_dx,
           _cascadeDy: el.cascade_dy,
         });

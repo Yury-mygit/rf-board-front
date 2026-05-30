@@ -520,6 +520,7 @@ function _patchInPlace(rec, e) {
   const attrs = e.attrs || {};
   rec.attrs = attrs;
   rec.parentId = e.parentId || null;
+  if (e.zIndex !== undefined) rec.z_index = e.zIndex;
   // Cascade: если backend сказал что frame двинулся на (cascade_dx, cascade_dy),
   // фронт translate'ит всех потомков. НО: если frame у нас уже на
   // (e.x, e.y) — значит юзер сам drag'ом двинул и frame, и детей
