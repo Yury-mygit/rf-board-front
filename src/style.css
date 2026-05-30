@@ -206,6 +206,20 @@ body.board-on #board { display: flex; }
 .board-shape {
   cursor: move;
 }
+/* Live-update плавность (карта #36 / fix cascade-move).
+   Применяется только на 320ms через JS-класс на узлах, изменённых
+   из SSE-event'а. На drag-move от пользователя транзишены НЕ работают
+   (классы не добавляются — drag остаётся мгновенным). */
+.board-shape.live-transition,
+.board-shape.live-transition rect,
+.board-shape.live-transition image,
+.board-shape.live-transition foreignObject,
+.live-transition {
+  transition: x 0.28s ease, y 0.28s ease,
+              width 0.28s ease, height 0.28s ease,
+              x1 0.28s ease, y1 0.28s ease, x2 0.28s ease, y2 0.28s ease,
+              transform 0.28s ease;
+}
 /* Не масштабировать stroke вместе с зумом — линии и обводки остаются screen-px. */
 .board-svg .board-shape,
 .board-svg .board-rubber,

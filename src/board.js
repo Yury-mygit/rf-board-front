@@ -503,14 +503,112 @@ export function removeFromApi(id) {
   return true;
 }
 
-// Upsert: удаляет существующий по id (если есть) и создаёт заново из API
-// payload. Простой подход — recreate вместо in-place patch — упрощает
-// type-specific логику (line/image/bpmn). При следующей итерации можно
-// сделать in-place patch для гладкого UX.
+// Upsert: для существующих элементов делаем in-place patch с CSS-transition
+// (через class .live-transition), новые рендерим как обычно. In-place
+// сохраняет DOM-ноду — браузер анимирует x/y/width/height attributes.
 export function upsertFromApi(e) {
   if (!e || !e.id) return;
-  removeFromApi(e.id);
-  renderFromApi(e);
+  const existing = elements.find(el => el.id === e.id);
+  if (!existing) {
+    renderFromApi(e);
+    return;
+  }
+  _patchInPlace(existing, e);
+}
+
+function _patchInPlace(rec, e) {
+  const attrs = e.attrs || {};
+  rec.attrs = attrs;
+  rec.parentId = e.parentId || null;
+  // Cascade: если backend сказал что frame двинулся на (cascade_dx, cascade_dy),
+  // фронт сам translate'ит всех потомков рекурсивно — одна синхронная
+  // анимация для всей группы.
+  if ((e._cascadeDx || e._cascadeDy) && rec.type === 'frame') {
+    _cascadeMoveChildren(rec.id, e._cascadeDx || 0, e._cascadeDy || 0);
+  }
+  // Универсальный подход: сдвиг через (dx, dy) translate всех внутренних
+  // координатных атрибутов. Работает для frame/rect/text/note/image/line —
+  // не нужно знать внутреннюю структуру с offset'ами.
+  const oldX = rec.type === 'line' ? Math.min(rec.x1, rec.x2) : rec.x;
+  const oldY = rec.type === 'line' ? Math.min(rec.y1, rec.y2) : rec.y;
+  const newX = rec.type === 'line' ? e.x : e.x;
+  const newY = rec.type === 'line' ? e.y : e.y;
+  const dx = newX - oldX;
+  const dy = newY - oldY;
+  if (rec.type === 'line') {
+    rec.x1 = e.x; rec.y1 = e.y; rec.x2 = e.x + e.w; rec.y2 = e.y + e.h;
+  } else {
+    rec.x = e.x; rec.y = e.y;
+    if (e.w !== undefined) rec.w = e.w;
+    if (e.h !== undefined) rec.h = e.h;
+  }
+  _animateNode(rec.node, () => {
+    if (dx || dy) _translateNode(rec.node, dx, dy);
+    // отдельно width/height для frame/rect/note — могут меняться без move
+    if (rec.type === 'rect' || rec.type === 'frame' || rec.type === 'note') {
+      // setRectAttrs принимает абсолютные x/y/w/h — для resize.
+      // При только move (dx,dy) — уже сделано translate'ом, w/h не менялись.
+      // setRectAttrs мы вызываем ТОЛЬКО если w/h изменились.
+      // Здесь проверка пропущена ради простоты: setRectAttrs повторно
+      // выставит x/y (то же значение, что и после translate) — idempotent.
+      setRectAttrs(rec.node, rec.x, rec.y, rec.w, rec.h);
+    } else if (rec.type === 'image') {
+      rec.node.setAttribute('width', rec.w);
+      rec.node.setAttribute('height', rec.h);
+    }
+  });
+  applyElementAttrs(rec);
+}
+
+// Рекурсивно двигает всех потомков frame'а на (dx, dy) — и DOM, и state.
+// Все mutations в одном tick'е → CSS-transition стартует синхронно у всех.
+function _cascadeMoveChildren(frameId, dx, dy) {
+  for (const el of elements) {
+    if (el.parentId !== frameId) continue;
+    if (el.type === 'line') {
+      el.x1 += dx; el.y1 += dy; el.x2 += dx; el.y2 += dy;
+    } else {
+      el.x += dx; el.y += dy;
+    }
+    _animateNode(el.node, () => _translateNode(el.node, dx, dy));
+    if (el.type === 'frame') _cascadeMoveChildren(el.id, dx, dy);
+  }
+}
+
+// Сдвигает все координатные атрибуты внутри ноды на (dx, dy). Работает
+// для любой SVG-структуры: проходит по <rect>, <image>, <foreignObject>,
+// <text>, <line>, плюс сам root-узел (если у него есть x/y).
+function _translateNode(node, dx, dy) {
+  if (!node) return;
+  const all = [node, ...node.querySelectorAll('rect, image, foreignObject, text, line')];
+  for (const el of all) {
+    if (el.hasAttribute && el.hasAttribute('x')) {
+      el.setAttribute('x', parseFloat(el.getAttribute('x')) + dx);
+    }
+    if (el.hasAttribute && el.hasAttribute('y')) {
+      el.setAttribute('y', parseFloat(el.getAttribute('y')) + dy);
+    }
+    if (el.hasAttribute && el.hasAttribute('x1')) {
+      el.setAttribute('x1', parseFloat(el.getAttribute('x1')) + dx);
+      el.setAttribute('y1', parseFloat(el.getAttribute('y1')) + dy);
+      el.setAttribute('x2', parseFloat(el.getAttribute('x2')) + dx);
+      el.setAttribute('y2', parseFloat(el.getAttribute('y2')) + dy);
+    }
+  }
+}
+
+// Добавляет класс .live-transition на 320ms — CSS-анимация x/y/width/height.
+// Без этого класса (например drag-move) переходы выключены.
+function _animateNode(node, mutate) {
+  if (!node) { mutate(); return; }
+  node.classList.add('live-transition');
+  // Дочерние ноды (group → rect, foreignObject) тоже должны анимироваться.
+  node.querySelectorAll && node.querySelectorAll('rect, foreignObject, image').forEach(n => n.classList.add('live-transition'));
+  mutate();
+  setTimeout(() => {
+    node.classList.remove('live-transition');
+    node.querySelectorAll && node.querySelectorAll('rect, foreignObject, image').forEach(n => n.classList.remove('live-transition'));
+  }, 320);
 }
 
 // Добавить элемент из API-формата (используется при redo create / undo delete).
