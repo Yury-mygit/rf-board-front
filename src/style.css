@@ -100,11 +100,17 @@ body.board-on #board { display: flex; }
 .board-sidebar {
   width: 200px;
   flex-shrink: 0;
-  border-right: 1px solid var(--border);
-  background: var(--surface);
+  border-right: 1px solid transparent;
+  background: transparent;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transition: background-color .18s ease, border-color .18s ease;
+}
+.board-sidebar:hover,
+body.board-sidebar-open .board-sidebar {
+  background: var(--surface);
+  border-right-color: var(--border);
 }
 .board-sidebar-toolbar {
   padding: 8px;
@@ -731,11 +737,15 @@ body.board-sidebar-open .board-sidebar-backdrop { display: block; }
   bottom: 0;
   right: 0;
   width: 280px;
-  background: var(--surface);
-  border-left: 1px solid var(--border);
+  background: transparent;
+  border-left: 1px solid transparent;
   z-index: 4;
   overflow: hidden;
-  transition: width .18s ease;
+  transition: width .18s ease, background-color .18s ease, border-color .18s ease;
+}
+body:not(.board-inspect-collapsed) .inspect-panel {
+  background: var(--surface);
+  border-left-color: var(--border);
 }
 .inspect-panel .ip-body {
   width: 280px;
