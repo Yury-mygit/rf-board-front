@@ -474,7 +474,7 @@ function positionContextMenu(bbox) {
   // bbox в world-координатах — конвертируем в screen для DOM-overlay.
   const tl = boardWorldToScreen(bbox.x, bbox.y);
   const bl = boardWorldToScreen(bbox.x, bbox.y + bbox.h);
-  const padding = 8;
+  const padding = 20;
   const TOOLBAR_H = 46;
   let topClient = tl.y - TOOLBAR_H - padding;
   if (topClient - cR.top < 4) topClient = bl.y + padding;
