@@ -114,12 +114,18 @@ body.board-sidebar-open .board-sidebar {
 }
 .board-sidebar-toolbar {
   padding: 8px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid transparent;
   flex-shrink: 0;
-  background: var(--surface);
+  background: transparent;
   position: sticky;
   bottom: 0;
   z-index: 1;
+  transition: background-color .18s ease, border-color .18s ease;
+}
+.board-sidebar:hover .board-sidebar-toolbar,
+body.board-sidebar-open .board-sidebar-toolbar {
+  background: var(--surface);
+  border-top-color: var(--border);
 }
 .board-sidebar-toolbar button {
   width: 100%;
@@ -169,11 +175,13 @@ body.board-sidebar-open .board-sidebar {
   font-size: 14px;
   color: var(--text);
   border-left: 3px solid transparent;
-  background: var(--surface);
+  background: transparent;
   transform: translateX(0);
-  transition: transform 0.18s ease;
+  transition: transform 0.18s ease, background-color .18s ease;
   user-select: none;
 }
+.board-sidebar:hover .board-item,
+body.board-sidebar-open .board-item { background: var(--surface); }
 .board-item:hover { background: var(--bg); }
 .board-item.active {
   background: var(--bg);
@@ -766,13 +774,17 @@ body:not(.board-inspect-collapsed) .inspect-panel {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--surface);
-  border: 1px solid var(--border);
+  background: transparent;
+  border: 1px solid transparent;
   border-radius: 6px;
   color: var(--muted);
   cursor: pointer;
   z-index: 2;
-  transition: transform .18s ease;
+  transition: transform .18s ease, background-color .18s ease, border-color .18s ease;
+}
+body:not(.board-inspect-collapsed) .inspect-toggle {
+  background: var(--surface);
+  border-color: var(--border);
 }
 .inspect-toggle:hover { color: var(--text); background: var(--bg); }
 .inspect-toggle svg { display: block; width: 16px; height: 16px; }
