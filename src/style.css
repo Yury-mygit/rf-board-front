@@ -138,6 +138,8 @@ body.board-on #board { display: flex; }
   overflow: hidden;
   touch-action: pan-y;
 }
+.board-item-wrap.dragging { opacity: 0.4; }
+.board-item-wrap.drag-over { box-shadow: inset 0 2px 0 0 var(--accent); }
 .board-item-actions {
   position: absolute;
   top: 0; right: 0; bottom: 0;
@@ -608,7 +610,14 @@ body.board-on #board { display: flex; }
   border-radius: 8px;
   box-shadow: 0 1px 4px rgba(0,0,0,.06);
   z-index: 5; /* выше .board-sidebar (4), чтобы раскрытый sidebar не перекрывал палитру */
+  transition: left .18s ease;
 }
+/* При раскрытой левой шторке (hover на desktop / open на mobile) палитра
+   едет вправо, чтобы не оставаться под выехавшим списком досок. */
+@media (min-width: 769px) {
+  .board-sidebar:hover ~ .board-content .board-tools { left: 252px; }
+}
+body.board-sidebar-open .board-content .board-tools { left: 252px; }
 .board-tool {
   width: 32px;
   height: 32px;
@@ -715,7 +724,7 @@ body.board-sidebar-open .board-sidebar-backdrop { display: block; }
   .board-content { padding-left: 44px; padding-right: 280px; }
 }
 
-/* ── Inspect-панель (правая) — всегда раскрыта на desktop ── */
+/* ── Inspect-панель (правая) — раскрыта по умолчанию, можно свернуть. ── */
 .inspect-panel {
   position: absolute;
   top: 0;
@@ -726,6 +735,7 @@ body.board-sidebar-open .board-sidebar-backdrop { display: block; }
   border-left: 1px solid var(--border);
   z-index: 4;
   overflow: hidden;
+  transition: width .18s ease;
 }
 .inspect-panel .ip-body {
   width: 280px;
@@ -735,6 +745,34 @@ body.board-sidebar-open .board-sidebar-backdrop { display: block; }
   font-size: 12px;
   color: var(--text);
   box-sizing: border-box;
+  transition: opacity .12s;
+}
+.inspect-toggle {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  z-index: 2;
+  transition: transform .18s ease;
+}
+.inspect-toggle:hover { color: var(--text); background: var(--bg); }
+.inspect-toggle svg { display: block; width: 16px; height: 16px; }
+
+/* Свёрнутое состояние — узкая полоска с одной кнопкой. */
+body.board-inspect-collapsed .inspect-panel { width: 44px; }
+body.board-inspect-collapsed .inspect-panel .ip-body { opacity: 0; pointer-events: none; }
+body.board-inspect-collapsed .inspect-toggle { transform: rotate(180deg); }
+@media (min-width: 769px) {
+  body.board-inspect-collapsed .board-content { padding-right: 44px; }
 }
 .inspect-panel .ip-empty {
   color: var(--muted);

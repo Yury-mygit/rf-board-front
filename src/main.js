@@ -1357,6 +1357,26 @@ function renderBoardsList() {
     const wrap = document.createElement('div');
     wrap.className = 'board-item-wrap';
     wrap.dataset.id = b.id;
+    // Drag-drop reorder (desktop). Touch остаётся swipe-to-delete.
+    wrap.draggable = true;
+    wrap.addEventListener('dragstart', (e) => {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', b.id);
+      wrap.classList.add('dragging');
+    });
+    wrap.addEventListener('dragend', () => wrap.classList.remove('dragging'));
+    wrap.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      wrap.classList.add('drag-over');
+    });
+    wrap.addEventListener('dragleave', () => wrap.classList.remove('drag-over'));
+    wrap.addEventListener('drop', (e) => {
+      e.preventDefault();
+      wrap.classList.remove('drag-over');
+      const fromId = e.dataTransfer.getData('text/plain');
+      if (fromId && fromId !== b.id) reorderBoards(fromId, b.id);
+    });
 
     const actions = document.createElement('div');
     actions.className = 'board-item-actions';
@@ -1390,6 +1410,23 @@ function renderBoardsList() {
     wrap.appendChild(item);
     list.appendChild(wrap);
   }
+}
+
+async function reorderBoards(fromId, toId) {
+  const fromIdx = allBoards.findIndex(b => b.id === fromId);
+  const toIdx = allBoards.findIndex(b => b.id === toId);
+  if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return;
+  // Optimistic local re-order.
+  const [moved] = allBoards.splice(fromIdx, 1);
+  allBoards.splice(toIdx, 0, moved);
+  renderBoardsList();
+  // Backend: PATCH каждой доски с новым order_index. Параллельно.
+  const now = Date.now();
+  await Promise.all(allBoards.map((b, i) => {
+    b.order_index = i;
+    return api.patchBoard(b.id, { order_index: i, updated_at: now })
+      .catch(err => console.warn(`patch order ${b.id}: ${err.message}`));
+  }));
 }
 
 function attachSwipeToDelete(wrap, item) {
@@ -1585,6 +1622,17 @@ function isMobile() { return window.matchMedia('(max-width: 768px)').matches; }
 function closeSidebar() { document.body.classList.remove('board-sidebar-open'); }
 function toggleSidebar() { document.body.classList.toggle('board-sidebar-open'); }
 document.getElementById('board-sidebar-toggle').addEventListener('click', toggleSidebar);
+
+// Inspect-panel toggle (правая шторка). Состояние в localStorage.
+const INSPECT_KEY = 'rfboard-inspect-collapsed';
+if (localStorage.getItem(INSPECT_KEY) === '1') {
+  document.body.classList.add('board-inspect-collapsed');
+}
+document.getElementById('inspect-toggle').addEventListener('click', () => {
+  const collapsed = document.body.classList.toggle('board-inspect-collapsed');
+  if (collapsed) localStorage.setItem(INSPECT_KEY, '1');
+  else localStorage.removeItem(INSPECT_KEY);
+});
 document.getElementById('board-sidebar-backdrop').addEventListener('click', closeSidebar);
 
 const zoomIndicator = document.getElementById('zoom-indicator');
