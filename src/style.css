@@ -735,7 +735,10 @@ body.board-sidebar-open .board-sidebar-backdrop { display: block; }
     transition: opacity .12s;
   }
   .board-sidebar:hover > * { opacity: 1; }
-  .board-content { padding-left: 44px; padding-right: 280px; }
+  /* Canvas — full width. Шторки лежат поверх (position: absolute,
+     прозрачный фон когда свёрнуты). Так padding-left/right не
+     создают «серые полоски» сбоку. */
+  .board-content { padding-left: 0; padding-right: 0; }
 }
 
 /* ── Inspect-панель (правая) — раскрыта по умолчанию, можно свернуть. ── */
@@ -793,9 +796,6 @@ body:not(.board-inspect-collapsed) .inspect-toggle {
 body.board-inspect-collapsed .inspect-panel { width: 44px; }
 body.board-inspect-collapsed .inspect-panel .ip-body { opacity: 0; pointer-events: none; }
 body.board-inspect-collapsed .inspect-toggle { transform: rotate(180deg); }
-@media (min-width: 769px) {
-  body.board-inspect-collapsed .board-content { padding-right: 44px; }
-}
 .inspect-panel .ip-empty {
   color: var(--muted);
   font-size: 12px;
