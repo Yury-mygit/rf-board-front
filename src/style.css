@@ -108,7 +108,12 @@ body.board-on #board { display: flex; }
 }
 .board-sidebar-toolbar {
   padding: 8px;
-  border-bottom: 1px solid var(--border);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--surface);
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
 }
 .board-sidebar-toolbar button {
   width: 100%;
