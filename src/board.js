@@ -606,6 +606,10 @@ function _patchInPlace(rec, e) {
 
 // Рекурсивно двигает всех потомков frame'а на (dx, dy) — и DOM, и state.
 // Все mutations в одном tick'е → CSS-transition стартует синхронно у всех.
+// applyGeo диспатчит по типу — каждый shape знает как себя перерисовать
+// корректно (sub-элементы c4_person/bpmn_event через applyC4ShapeGeo /
+// applyBpmnShapeGeo, ре-routing relationships через recomputeFlows
+// внутри applyGeo). Старый `_translateNode` не покрывает <circle>/<path>.
 function _cascadeMoveChildren(frameId, dx, dy) {
   for (const el of elements) {
     if (el.parentId !== frameId) continue;
@@ -614,7 +618,7 @@ function _cascadeMoveChildren(frameId, dx, dy) {
     } else {
       el.x += dx; el.y += dy;
     }
-    _animateNode(el.node, () => _translateNode(el.node, dx, dy));
+    _animateNode(el.node, () => applyGeo(el));
     if (el.type === 'frame') _cascadeMoveChildren(el.id, dx, dy);
   }
 }
