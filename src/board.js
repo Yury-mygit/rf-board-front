@@ -272,6 +272,16 @@ export function setViewport(v) {
   applyViewBox();
 }
 
+// Сдвиг камеры на (dxPx, dyPx) в экранных пикселях. Используется
+// клавиатурным pan'ом — экранные шаги дают одинаковое ощущение при
+// любом zoom.
+export function panViewportByScreen(dxPx, dyPx) {
+  if (!svg || !viewport.zoom) return;
+  viewport.vx += dxPx / viewport.zoom;
+  viewport.vy += dyPx / viewport.zoom;
+  applyViewBox();
+}
+
 export function zoomIn() {
   if (!svg) return;
   const r = svg.getBoundingClientRect();
@@ -1841,6 +1851,56 @@ export function setElementGeo(id, geo) {
     if (rec.type === 'frame' || rec.type === 'rect' || rec.type === 'image' || isBpmnShape(rec.type) || isC4Shape(rec.type)) updateHandles(rec);
     onSelectionChanged(rec, bboxOf(rec));
   }
+}
+
+// Snapshot геометрии (x, y, w, h, parentId) — для undo before/after извне.
+// Для line: (x, y) = (x1, y1), (w, h) = (x2-x1, y2-y1). null если нет элемента.
+export function snapshotGeo(id) {
+  const rec = elements.find(e => e.id === id);
+  return rec ? snapshotGeoLocal(rec) : null;
+}
+
+// Клавиатурный nudge выделения на (dx, dy) в world units. Сдвигает selected
+// и (для выбранных фреймов) их детей рекурсивно, как одиночный/group drag.
+// Без CSS-анимации — рассчитан на серии повторных тапов.
+// Возвращает Set<id> затронутых элементов, или null если selection пуст.
+export function nudgeSelection(dx, dy) {
+  if (selectedIds.size === 0) return null;
+  const movingIds = new Set();
+  const collect = (rec) => {
+    if (movingIds.has(rec.id)) return;
+    movingIds.add(rec.id);
+    if (rec.type === 'frame') {
+      for (const child of childrenOf(rec.id)) collect(child);
+    }
+  };
+  for (const sel of getAllSelected()) collect(sel);
+  for (const id of movingIds) {
+    const el = elements.find(e => e.id === id);
+    if (!el) continue;
+    moveBy(el, dx, dy);
+    onElementChanged(el);
+  }
+  const only = getOnlySelected();
+  if (only && movingIds.has(only.id)) {
+    if (only.type === 'frame' || only.type === 'rect' || only.type === 'image' || isBpmnShape(only.type) || isC4Shape(only.type)) updateHandles(only);
+    onSelectionChanged(only, bboxOf(only));
+  }
+  return movingIds;
+}
+
+// Пересчёт parentId после nudge серии для non-frame элемента: меняет
+// parent если центр теперь в другом frame'е. Возвращает {before, after}
+// или null если не изменился. Меняет rec.parentId внутри.
+export function recomputeParentIdAfterNudge(id) {
+  const rec = elements.find(e => e.id === id);
+  if (!rec || rec.type === 'frame') return null;
+  const newParent = frameContaining(rec);
+  const before = rec.parentId || null;
+  const after = newParent ? newParent.id : null;
+  if (before === after) return null;
+  rec.parentId = after;
+  return { before, after };
 }
 
 // Изменить parent_id элемента (для undo/redo resize-а фрейма с reparenting'ом детей).

@@ -1,4 +1,4 @@
-import { initBoard, setBoardCursor, loadBoard, clearBoard, applyElementAttrs, deselect as boardDeselect, removeElements as boardRemoveElements, exitEdit as boardExitEdit, getAllSelected as boardGetAllSelected, getSelectedCount as boardGetSelectedCount, addFromApi as boardAddFromApi, upsertFromApi as boardUpsertFromApi, removeFromApi as boardRemoveFromApi, getAllElements as boardGetAllElements, setElementGeo as boardSetElementGeo, setElementParent as boardSetElementParent, getElementById as boardGetElementById, getChildrenOf as boardGetChildrenOf, setSelection as boardSetSelection, zoomIn as boardZoomIn, zoomOut as boardZoomOut, fitView as boardFitView, setViewport as boardSetViewport, worldToScreen as boardWorldToScreen, isEditing as boardIsEditing, getFlowsTouchingAny as boardGetFlowsTouchingAny, placeImage as boardPlaceImage, getCanvasCenterWorld as boardGetCanvasCenterWorld, readImageFile as boardReadImageFile } from './board.js';
+import { initBoard, setBoardCursor, loadBoard, clearBoard, applyElementAttrs, deselect as boardDeselect, removeElements as boardRemoveElements, exitEdit as boardExitEdit, getAllSelected as boardGetAllSelected, getSelectedCount as boardGetSelectedCount, addFromApi as boardAddFromApi, upsertFromApi as boardUpsertFromApi, removeFromApi as boardRemoveFromApi, getAllElements as boardGetAllElements, setElementGeo as boardSetElementGeo, setElementParent as boardSetElementParent, getElementById as boardGetElementById, getChildrenOf as boardGetChildrenOf, setSelection as boardSetSelection, zoomIn as boardZoomIn, zoomOut as boardZoomOut, fitView as boardFitView, setViewport as boardSetViewport, worldToScreen as boardWorldToScreen, isEditing as boardIsEditing, getFlowsTouchingAny as boardGetFlowsTouchingAny, placeImage as boardPlaceImage, getCanvasCenterWorld as boardGetCanvasCenterWorld, readImageFile as boardReadImageFile, nudgeSelection as boardNudgeSelection, panViewportByScreen as boardPanViewportByScreen, snapshotGeo as boardSnapshotGeo, recomputeParentIdAfterNudge as boardRecomputeParentIdAfterNudge } from './board.js';
 import { assetUrl, mediaUpload } from './media.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -904,6 +904,10 @@ function clearUndo() {
 }
 
 function pushUndo(op) {
+  // Любой push отдельной op закрывает активную nudge-серию (см. arrow handler),
+  // чтобы порядок ops в стеке отражал порядок действий. Гард _closingNudge
+  // нужен на самой closeNudgeSession (она внутри тоже зовёт pushUndo).
+  if (!_closingNudge) closeNudgeSession();
   undoStack.push(op);
   if (undoStack.length > UNDO_LIMIT) undoStack.shift();
   redoStack = [];
@@ -1196,6 +1200,15 @@ function onBoardKeydown(e) {
   // фокус случайно остался в каком-то input (например, в title фрейма).
   const inBoardEdit = boardIsEditing();
 
+  // Любая клавиатурная команда, кроме стрелок, закрывает активную nudge-серию.
+  const isArrow = e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight';
+  if (!isArrow) closeNudgeSession();
+
+  if (isArrow && !inBoardEdit && !isInputTarget) {
+    handleArrowKey(e);
+    return;
+  }
+
   const mod = e.ctrlKey || e.metaKey;
   if (mod && !inBoardEdit) {
     const k = e.key.toLowerCase();
@@ -1244,6 +1257,114 @@ function onBoardKeydown(e) {
     deleteBoardSelected();
   }
 }
+
+// ── Keyboard nudge / pan ─────────────────────────────────────────────────────
+// Стрелки: нет selection → pan камеры (экранные пиксели), есть → nudge выделения
+// (world units, с детьми выбранных фреймов). Серия повторных тапов коалесцируется
+// в одну undo-op через 500 мс тишины; после закрытия серии форсим flush save +
+// containment recompute (как drag-end).
+
+const NUDGE_STEP_BASE = 1;
+const NUDGE_STEP_SHIFT = 10;
+const PAN_STEP_BASE_PX = 50;
+const PAN_STEP_SHIFT_PX = 200;
+const NUDGE_COMMIT_TIMEOUT_MS = 500;
+
+let nudgeSession = null;       // {beforeMap: Map<id, geo>, movedIds: Set<id>, timer, selKey}
+let _closingNudge = false;     // guard от рекурсии через pushUndo
+
+function _selectionKey() {
+  return boardGetAllSelected().map(r => r.id).sort().join(',');
+}
+
+function _collectFrameDescendantIds(frameId, out) {
+  for (const ch of boardGetChildrenOf(frameId)) {
+    if (out.has(ch.id)) continue;
+    out.add(ch.id);
+    if (ch.type === 'frame') _collectFrameDescendantIds(ch.id, out);
+  }
+}
+
+function _captureSelectionBefore() {
+  const ids = new Set();
+  for (const sel of boardGetAllSelected()) {
+    ids.add(sel.id);
+    if (sel.type === 'frame') _collectFrameDescendantIds(sel.id, ids);
+  }
+  const map = new Map();
+  for (const id of ids) {
+    const g = boardSnapshotGeo(id);
+    if (g) map.set(id, g);
+  }
+  return map;
+}
+
+function closeNudgeSession() {
+  if (!nudgeSession || _closingNudge) return;
+  _closingNudge = true;
+  try {
+    const s = nudgeSession;
+    nudgeSession = null;
+    clearTimeout(s.timer);
+    const items = [];
+    for (const id of s.movedIds) {
+      const before = s.beforeMap.get(id);
+      if (!before) continue;
+      const rec = boardGetElementById(id);
+      if (!rec) continue;
+      // Containment recompute (как drag-end), только для non-frame.
+      if (rec.type !== 'frame') boardRecomputeParentIdAfterNudge(id);
+      const after = boardSnapshotGeo(id);
+      if (!after) continue;
+      if (
+        before.x === after.x && before.y === after.y &&
+        before.w === after.w && before.h === after.h &&
+        (before.parentId || null) === (after.parentId || null)
+      ) continue;
+      items.push({ id, before, after });
+      flushElementSave(rec);
+    }
+    if (items.length) pushUndo({ kind: 'move', items });
+  } finally {
+    _closingNudge = false;
+  }
+}
+
+function handleArrowKey(e) {
+  const dxSign = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0;
+  const dySign = e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0;
+  if (dxSign === 0 && dySign === 0) return;
+  e.preventDefault();
+
+  if (boardGetSelectedCount() === 0) {
+    const step = e.shiftKey ? PAN_STEP_SHIFT_PX : PAN_STEP_BASE_PX;
+    // Стрелка вправо/вниз = камера движется вправо/вниз = vx/vy растёт.
+    boardPanViewportByScreen(dxSign * step, dySign * step);
+    return;
+  }
+
+  const step = e.shiftKey ? NUDGE_STEP_SHIFT : NUDGE_STEP_BASE;
+  const dx = dxSign * step;
+  const dy = dySign * step;
+
+  const curKey = _selectionKey();
+  // Selection поменялся между нажатиями — старая серия завершается, новая стартует.
+  if (nudgeSession && nudgeSession.selKey !== curKey) closeNudgeSession();
+  if (!nudgeSession) {
+    nudgeSession = {
+      beforeMap: _captureSelectionBefore(),
+      movedIds: new Set(),
+      timer: null,
+      selKey: curKey,
+    };
+  }
+  const moved = boardNudgeSelection(dx, dy);
+  if (moved) for (const id of moved) nudgeSession.movedIds.add(id);
+  clearTimeout(nudgeSession.timer);
+  nudgeSession.timer = setTimeout(closeNudgeSession, NUDGE_COMMIT_TIMEOUT_MS);
+}
+
+window.addEventListener('blur', closeNudgeSession);
 
 async function deleteBoardSelected() {
   if (!currentBoardId) return;
