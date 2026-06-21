@@ -10,6 +10,11 @@ import {
   ensureBpmnDefs, createBpmnShape, applyBpmnShapeGeo, applyBpmnShapeAttrs,
   createBpmnFlow, updateBpmnFlow, normalizeBpmnGeo,
 } from './bpmn.js';
+import {
+  C4_DEFAULTS, isC4Shape,
+  ensureC4Defs, createC4Shape, applyC4ShapeGeo, applyC4ShapeAttrs,
+  createC4Relationship, updateC4Relationship, normalizeC4Geo,
+} from './c4.js';
 import { assetUrl, mediaUpload } from './media.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -39,6 +44,7 @@ let selectedIds = new Set(); // id'ы выбранных элементов
 let editing = null;  // text/note в режиме редактирования (input доступен)
 let frameTarget = null; // фрейм-цель при drag (для подсветки)
 let flowStart = null; // первый shape выбран для создания bpmn_flow
+let c4RelStart = null; // первый shape выбран для создания c4_relationship
 let handlesG = null; // <g> с 8 resize-handles, всегда поверх
 let gridBgRect = null; // фоновый rect под всеми элементами с fill=url(#board-grid)
 let gridPattern = null; // <pattern>, шаг пересчитывается в applyViewBox
@@ -154,6 +160,8 @@ export function initBoard(container, opts = {}) {
 
   installGridBackground();
   ensureBpmnDefs(svg);
+  ensureC4Defs(svg);
+  ensureBoardArrowDefs(svg);
 
   handlesG = createHandles();
   svg.appendChild(handlesG);
@@ -186,6 +194,31 @@ function applyViewBox() {
   updateGridForViewport(vw, vh);
   refreshHandlesIfVisible();
   onViewportChanged({ ...viewport });
+}
+
+// Generic arrow marker для `line.attrs.arrow`. Отдельный от bpmn-arrow /
+// c4-arrow, чтобы цвет/геометрия trade-off не таскали друг друга.
+function ensureBoardArrowDefs(svg) {
+  if (svg.querySelector('defs marker#board-arrow')) return;
+  let defs = svg.querySelector('defs');
+  if (!defs) {
+    defs = document.createElementNS(SVG_NS, 'defs');
+    svg.insertBefore(defs, svg.firstChild);
+  }
+  const marker = document.createElementNS(SVG_NS, 'marker');
+  marker.setAttribute('id', 'board-arrow');
+  marker.setAttribute('viewBox', '0 0 10 10');
+  marker.setAttribute('refX', '9');
+  marker.setAttribute('refY', '5');
+  marker.setAttribute('markerWidth', '8');
+  marker.setAttribute('markerHeight', '8');
+  marker.setAttribute('orient', 'auto-start-reverse');
+  marker.setAttribute('markerUnits', 'strokeWidth');
+  const path = document.createElementNS(SVG_NS, 'path');
+  path.setAttribute('d', 'M0 0 L10 5 L0 10 z');
+  path.setAttribute('fill', '#212529');
+  marker.appendChild(path);
+  defs.appendChild(marker);
 }
 
 // Фон-сетка как в Miro: точечный pattern, шаг переключается на ×5/÷5 при пересечении
@@ -457,7 +490,7 @@ function updateHandles(frame) {
 function refreshHandlesIfVisible() {
   if (!handlesG || handlesG.style.display === 'none') return;
   const sel = getOnlySelected();
-  if (sel && (sel.type === 'frame' || sel.type === 'rect' || sel.type === 'image' || isBpmnShape(sel.type))) updateHandles(sel);
+  if (sel && (sel.type === 'frame' || sel.type === 'rect' || sel.type === 'image' || isBpmnShape(sel.type) || isC4Shape(sel.type))) updateHandles(sel);
 }
 
 export function setBoardCursor(tool) {
@@ -700,6 +733,23 @@ function renderFromApi(e) {
     const s = attrs.sourceId ? elements.find(el => el.id === attrs.sourceId) : null;
     const t = attrs.targetId ? elements.find(el => el.id === attrs.targetId) : null;
     updateBpmnFlow(rec, s, t);
+    return;
+  }
+  if (isC4Shape(e.type)) {
+    const node = createC4Shape(e.type);
+    svg.appendChild(node);
+    const rec = register({ id: e.id, type: e.type, node, x: e.x, y: e.y, w: e.w, h: e.h, attrs, parentId });
+    applyC4ShapeGeo(node, e.type, e.x, e.y, e.w, e.h);
+    applyC4ShapeAttrs(node, e.type, attrs);
+    return;
+  }
+  if (e.type === 'c4_relationship') {
+    const node = createC4Relationship();
+    svg.appendChild(node);
+    const rec = register({ id: e.id, type: 'c4_relationship', node, x: e.x, y: e.y, w: e.w, h: e.h, attrs, parentId: null });
+    const s = attrs.sourceId ? elements.find(el => el.id === attrs.sourceId) : null;
+    const t = attrs.targetId ? elements.find(el => el.id === attrs.targetId) : null;
+    updateC4Relationship(rec, s, t);
   }
 }
 
@@ -716,19 +766,21 @@ function findShape(target) {
 function canMove(el) {
   return el.type === 'line' || el.type === 'rect' || el.type === 'frame'
       || el.type === 'text' || el.type === 'note' || el.type === 'image'
-      || isBpmnShape(el.type);
+      || isBpmnShape(el.type) || isC4Shape(el.type);
 }
 
-// Все bpmn_flow, у которых source или target — заданный id. Используется для
-// пересчёта path при move/resize концов.
+// Все edges (bpmn_flow + c4_relationship), у которых source или target —
+// заданный id. Используется для пересчёта path при move/resize концов.
+function isEdgeType(t) { return t === 'bpmn_flow' || t === 'c4_relationship'; }
+
 function flowsTouching(id) {
-  return elements.filter(el => el.type === 'bpmn_flow'
+  return elements.filter(el => isEdgeType(el.type)
     && (el.attrs?.sourceId === id || el.attrs?.targetId === id));
 }
 
 export function getFlowsTouchingAny(ids) {
   const idSet = new Set(ids);
-  return elements.filter(el => el.type === 'bpmn_flow'
+  return elements.filter(el => isEdgeType(el.type)
     && (idSet.has(el.attrs?.sourceId) || idSet.has(el.attrs?.targetId)));
 }
 
@@ -736,13 +788,14 @@ function recomputeFlows(ids) {
   if (!ids || !ids.length) return;
   const idSet = new Set(ids);
   for (const el of elements) {
-    if (el.type !== 'bpmn_flow') continue;
+    if (!isEdgeType(el.type)) continue;
     const sId = el.attrs?.sourceId;
     const tId = el.attrs?.targetId;
     if (!(idSet.has(sId) || idSet.has(tId))) continue;
     const s = sId ? elements.find(e => e.id === sId) : null;
     const t = tId ? elements.find(e => e.id === tId) : null;
-    updateBpmnFlow(el, s, t);
+    if (el.type === 'bpmn_flow') updateBpmnFlow(el, s, t);
+    else updateC4Relationship(el, s, t);
   }
 }
 
@@ -860,7 +913,7 @@ function onDown(e) {
   // Handle resize-handle первым: имеет приоритет над shape-кликом.
   const handleEl = e.target.closest('.resize-handle');
   const onlySel = getOnlySelected();
-  if (handleEl && onlySel && (onlySel.type === 'frame' || onlySel.type === 'rect' || onlySel.type === 'image' || isBpmnShape(onlySel.type))) {
+  if (handleEl && onlySel && (onlySel.type === 'frame' || onlySel.type === 'rect' || onlySel.type === 'image' || isBpmnShape(onlySel.type) || isC4Shape(onlySel.type))) {
     const b = bboxOf(onlySel);
     resize = {
       el: onlySel,
@@ -918,6 +971,44 @@ function onDown(e) {
       updateBpmnFlow(rec, flowStart, target);
       flowStart.node.classList.remove('bpmn-flow-source');
       flowStart = null;
+      onElementCreated(rec);
+      onToolUsed();
+      e.preventDefault();
+      return;
+    }
+    if (tool === 'c4_relationship') {
+      const target = findShape(e.target);
+      const ok = target && isC4Shape(target.type);
+      if (!ok) {
+        if (c4RelStart) c4RelStart.node.classList.remove('c4-rel-source');
+        c4RelStart = null;
+        onToolUsed();
+        e.preventDefault();
+        return;
+      }
+      if (!c4RelStart) {
+        c4RelStart = target;
+        target.node.classList.add('c4-rel-source');
+        e.preventDefault();
+        return;
+      }
+      if (target.id === c4RelStart.id) {
+        c4RelStart.node.classList.remove('c4-rel-source');
+        c4RelStart = null;
+        e.preventDefault();
+        return;
+      }
+      const node = createC4Relationship();
+      svg.appendChild(node);
+      const rec = register({
+        id: uuid(), type: 'c4_relationship', node,
+        x: 0, y: 0, w: 0, h: 0,
+        attrs: { sourceId: c4RelStart.id, targetId: target.id },
+        parentId: null,
+      });
+      updateC4Relationship(rec, c4RelStart, target);
+      c4RelStart.node.classList.remove('c4-rel-source');
+      c4RelStart = null;
       onElementCreated(rec);
       onToolUsed();
       e.preventDefault();
@@ -1045,6 +1136,9 @@ function onMove(e) {
     if (isBpmnShape(r.el.type)) {
       applyBpmnShapeGeo(r.el.node, r.el.type, nx, ny, nw, nh);
       recomputeFlows([r.el.id]);
+    } else if (isC4Shape(r.el.type)) {
+      applyC4ShapeGeo(r.el.node, r.el.type, nx, ny, nw, nh);
+      recomputeFlows([r.el.id]);
     } else {
       setRectAttrs(r.el.node, nx, ny, nw, nh);
     }
@@ -1101,7 +1195,7 @@ function onMove(e) {
       }
     }
     if (getOnlySelected() === move.el) {
-      if (move.el.type === 'frame' || move.el.type === 'rect' || move.el.type === 'image' || isBpmnShape(move.el.type)) updateHandles(move.el);
+      if (move.el.type === 'frame' || move.el.type === 'rect' || move.el.type === 'image' || isBpmnShape(move.el.type) || isC4Shape(move.el.type)) updateHandles(move.el);
       onSelectionChanged(move.el, bboxOf(move.el));
     }
   }
@@ -1172,10 +1266,14 @@ function onUp(e) {
   if (drag) {
     const p = point(e);
     const small = Math.abs(p.x - drag.x1) < 3 && Math.abs(p.y - drag.y1) < 3;
-    // Для bpmn-shape click-без-drag разрешён: размещаем default-размером в точке клика.
+    // Для bpmn/c4-shape click-без-drag разрешён: размещаем default-размером в точке клика.
     if (drag.node && small && isBpmnShape(drag.type)) {
       const def = BPMN_DEFAULTS[drag.type];
       applyBpmnShapeGeo(drag.node, drag.type,
+        drag.x1 - def.w / 2, drag.y1 - def.h / 2, def.w, def.h);
+    } else if (drag.node && small && isC4Shape(drag.type)) {
+      const def = C4_DEFAULTS[drag.type];
+      applyC4ShapeGeo(drag.node, drag.type,
         drag.x1 - def.w / 2, drag.y1 - def.h / 2, def.w, def.h);
     } else if (small) {
       if (drag.node) drag.node.remove();
@@ -1188,7 +1286,14 @@ function onUp(e) {
         ? (drag.type === 'bpmn_event' ? { kind: 'start' }
           : drag.type === 'bpmn_gateway' ? { kind: 'exclusive' }
           : {})
-        : {};
+        : isC4Shape(drag.type)
+          ? (drag.type === 'c4_system' ? { kind: 'internal', label: 'System' }
+            : drag.type === 'c4_person' ? { kind: 'internal', label: 'Person' }
+            : drag.type === 'c4_boundary' ? { kind: 'system', label: 'Boundary' }
+            : drag.type === 'c4_container' ? { label: 'Container' }
+            : drag.type === 'c4_component' ? { label: 'Component' }
+            : {})
+          : {};
       const rec = { id: uuid(), type: drag.type, node: drag.node, attrs, parentId: null };
       if (drag.type === 'line') {
         rec.x1 = drag.x1; rec.y1 = drag.y1; rec.x2 = p.x; rec.y2 = p.y;
@@ -1202,6 +1307,16 @@ function onUp(e) {
         rec.x = g.x; rec.y = g.y; rec.w = g.w; rec.h = g.h;
         applyBpmnShapeGeo(rec.node, rec.type, rec.x, rec.y, rec.w, rec.h);
         applyBpmnShapeAttrs(rec.node, rec.type, attrs);
+      } else if (isC4Shape(drag.type)) {
+        const g = small
+          ? { x: drag.x1 - C4_DEFAULTS[drag.type].w / 2,
+              y: drag.y1 - C4_DEFAULTS[drag.type].h / 2,
+              w: C4_DEFAULTS[drag.type].w,
+              h: C4_DEFAULTS[drag.type].h }
+          : normalizeC4Geo(drag.type, drag.x1, drag.y1, p.x, p.y);
+        rec.x = g.x; rec.y = g.y; rec.w = g.w; rec.h = g.h;
+        applyC4ShapeGeo(rec.node, rec.type, rec.x, rec.y, rec.w, rec.h);
+        applyC4ShapeAttrs(rec.node, rec.type, attrs);
       } else {
         rec.x = Math.min(drag.x1, p.x);
         rec.y = Math.min(drag.y1, p.y);
@@ -1310,6 +1425,18 @@ export function applyElementAttrs(rec) {
     if (a.stroke !== undefined) rec.node.setAttribute('stroke', a.stroke === null ? 'none' : a.stroke);
     if (a.strokeWidth !== undefined) rec.node.setAttribute('stroke-width', a.strokeWidth);
     if (a.strokeOpacity !== undefined) rec.node.setAttribute('stroke-opacity', a.strokeOpacity);
+    // arrow: 'none' (default) | 'end' | 'both' | 'start'
+    const arrow = a.arrow || 'none';
+    if (arrow === 'end' || arrow === 'both') {
+      rec.node.setAttribute('marker-end', 'url(#board-arrow)');
+    } else {
+      rec.node.removeAttribute('marker-end');
+    }
+    if (arrow === 'start' || arrow === 'both') {
+      rec.node.setAttribute('marker-start', 'url(#board-arrow)');
+    } else {
+      rec.node.removeAttribute('marker-start');
+    }
     return;
   }
   if (rec.type === 'text') {
@@ -1368,12 +1495,25 @@ export function applyElementAttrs(rec) {
     const s = a.sourceId ? elements.find(el => el.id === a.sourceId) : null;
     const t = a.targetId ? elements.find(el => el.id === a.targetId) : null;
     updateBpmnFlow(rec, s, t);
+    return;
+  }
+  if (isC4Shape(rec.type)) {
+    applyC4ShapeAttrs(rec.node, rec.type, a);
+    return;
+  }
+  if (rec.type === 'c4_relationship') {
+    const s = a.sourceId ? elements.find(el => el.id === a.sourceId) : null;
+    const t = a.targetId ? elements.find(el => el.id === a.targetId) : null;
+    updateC4Relationship(rec, s, t);
   }
 }
 
 function createShape(type) {
   if (isBpmnShape(type)) {
     return createBpmnShape(type, {});
+  }
+  if (isC4Shape(type)) {
+    return createC4Shape(type);
   }
   if (type === 'line') {
     const el = document.createElementNS(SVG_NS, 'line');
@@ -1486,6 +1626,11 @@ function applyShape(node, type, x1, y1, x2, y2) {
     applyBpmnShapeGeo(node, type, g.x, g.y, g.w, g.h);
     return;
   }
+  if (isC4Shape(type)) {
+    const g = normalizeC4Geo(type, x1, y1, x2, y2);
+    applyC4ShapeGeo(node, type, g.x, g.y, g.w, g.h);
+    return;
+  }
   setRectAttrs(node, Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
 }
 
@@ -1502,6 +1647,11 @@ function moveBy(el, dx, dy) {
   el.x += dx; el.y += dy;
   if (isBpmnShape(el.type)) {
     applyBpmnShapeGeo(el.node, el.type, el.x, el.y, el.w, el.h);
+    recomputeFlows([el.id]);
+    return;
+  }
+  if (isC4Shape(el.type)) {
+    applyC4ShapeGeo(el.node, el.type, el.x, el.y, el.w, el.h);
     recomputeFlows([el.id]);
     return;
   }
@@ -1563,7 +1713,7 @@ export function deselect() {
 function notifySelectionChanged() {
   if (selectedIds.size === 1) {
     const only = getOnlySelected();
-    if (only.type === 'frame' || only.type === 'rect' || only.type === 'image' || isBpmnShape(only.type)) showHandlesFor(only);
+    if (only.type === 'frame' || only.type === 'rect' || only.type === 'image' || isBpmnShape(only.type) || isC4Shape(only.type)) showHandlesFor(only);
     else hideHandles();
     onSelectionChanged(only, bboxOf(only));
   } else {
@@ -1629,6 +1779,18 @@ function applyGeo(rec) {
     updateBpmnFlow(rec, s, t);
     return;
   }
+  if (isC4Shape(rec.type)) {
+    applyC4ShapeGeo(rec.node, rec.type, rec.x, rec.y, rec.w, rec.h);
+    recomputeFlows([rec.id]);
+    return;
+  }
+  if (rec.type === 'c4_relationship') {
+    const a = rec.attrs || {};
+    const s = a.sourceId ? elements.find(el => el.id === a.sourceId) : null;
+    const t = a.targetId ? elements.find(el => el.id === a.targetId) : null;
+    updateC4Relationship(rec, s, t);
+    return;
+  }
   if (rec.type === 'text') {
     const fo = rec.node.querySelector('foreignObject');
     const hit = rec.node.querySelector('.board-edit-hit');
@@ -1672,7 +1834,7 @@ export function setElementGeo(id, geo) {
   applyGeo(rec);
   if (rec.type === 'text') resizeTextWidth(rec);
   if (getOnlySelected() === rec) {
-    if (rec.type === 'frame' || rec.type === 'rect' || rec.type === 'image' || isBpmnShape(rec.type)) updateHandles(rec);
+    if (rec.type === 'frame' || rec.type === 'rect' || rec.type === 'image' || isBpmnShape(rec.type) || isC4Shape(rec.type)) updateHandles(rec);
     onSelectionChanged(rec, bboxOf(rec));
   }
 }

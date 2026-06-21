@@ -62,6 +62,7 @@ let currentBoardId = null;
 const elementSaveTimers = new Map(); // id → timeoutId (debounced PATCH)
 
 const BPMN_TOOLS = new Set(['bpmn_event', 'bpmn_task', 'bpmn_gateway', 'bpmn_flow']);
+const C4_TOOLS = new Set(['c4_person', 'c4_system', 'c4_container', 'c4_component', 'c4_boundary', 'c4_relationship']);
 
 function setBoardTool(name) {
   boardTool = boardTool === name ? null : name;
@@ -74,6 +75,11 @@ function setBoardTool(name) {
   document.querySelectorAll('#bpmn-popover .bpmn-pop-item').forEach(el => {
     el.classList.toggle('active', el.dataset.tool === boardTool);
   });
+  const c4Btn = document.getElementById('c4-tool-btn');
+  if (c4Btn) c4Btn.classList.toggle('active', C4_TOOLS.has(boardTool));
+  document.querySelectorAll('#c4-popover .c4-pop-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.tool === boardTool);
+  });
   setBoardCursor(boardTool);
 }
 
@@ -81,7 +87,9 @@ function clearBoardTool() {
   boardTool = null;
   document.querySelectorAll('.board-tool').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('#bpmn-popover .bpmn-pop-item').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('#c4-popover .c4-pop-item').forEach(el => el.classList.remove('active'));
   closeBpmnPopover();
+  closeC4Popover();
   setBoardCursor(null);
 }
 
@@ -94,7 +102,24 @@ function toggleBpmnPopover() {
   if (!pop) return;
   const btn = document.getElementById('bpmn-tool-btn');
   if (!btn) return;
+  closeC4Popover();
   // позиционируем рядом с кнопкой по вертикали
+  const btnR = btn.getBoundingClientRect();
+  const content = document.querySelector('.board-content').getBoundingClientRect();
+  pop.style.top = (btnR.top - content.top) + 'px';
+  pop.classList.toggle('open');
+}
+
+function closeC4Popover() {
+  document.getElementById('c4-popover')?.classList.remove('open');
+}
+
+function toggleC4Popover() {
+  const pop = document.getElementById('c4-popover');
+  if (!pop) return;
+  const btn = document.getElementById('c4-tool-btn');
+  if (!btn) return;
+  closeBpmnPopover();
   const btnR = btn.getBoundingClientRect();
   const content = document.querySelector('.board-content').getBoundingClientRect();
   pop.style.top = (btnR.top - content.top) + 'px';
@@ -231,6 +256,17 @@ function buildContextMenu() {
   numInputHandler(document.getElementById('ctx-rx'), 'rx');
   numInputHandler(document.getElementById('ctx-sw'), 'strokeWidth');
   numInputHandler(document.getElementById('ctx-line-sw'), 'strokeWidth');
+
+  // Стрелка у line
+  const arrowSel = document.getElementById('ctx-line-arrow');
+  arrowSel.addEventListener('change', () => {
+    if (!ctxMenuTarget || ctxMenuTarget.type !== 'line') return;
+    const before = ctxMenuTarget.attrs?.arrow || 'none';
+    const after = arrowSel.value;
+    if (before === after) return;
+    commitAttrChange(ctxMenuTarget, { arrow: before }, { arrow: after });
+  });
+  arrowSel.addEventListener('mousedown', e => e.stopPropagation());
 
   // Палитра цвета для line — переиспользуем общую палитру (как у rect.stroke).
   document.getElementById('ctx-line-color-btn').addEventListener('click', e => {
@@ -389,6 +425,7 @@ function refreshContextUI() {
       }
     }
     document.getElementById('ctx-line-sw').value = a.strokeWidth !== undefined ? a.strokeWidth : 2;
+    document.getElementById('ctx-line-arrow').value = a.arrow || 'none';
   } else if (ctxMenuTarget.type === 'bpmn_event' || ctxMenuTarget.type === 'bpmn_task'
           || ctxMenuTarget.type === 'bpmn_gateway' || ctxMenuTarget.type === 'bpmn_flow') {
     const lblInput = document.getElementById('ctx-bpmn-label');
@@ -1663,7 +1700,9 @@ async function createBoard(title) {
 document.querySelectorAll('.board-tool').forEach(el => {
   el.addEventListener('click', () => {
     if (el.id === 'bpmn-tool-btn') { toggleBpmnPopover(); return; }
+    if (el.id === 'c4-tool-btn') { toggleC4Popover(); return; }
     closeBpmnPopover();
+    closeC4Popover();
     setBoardTool(el.dataset.tool);
   });
 });
@@ -1673,12 +1712,27 @@ document.querySelectorAll('#bpmn-popover .bpmn-pop-item').forEach(el => {
     closeBpmnPopover();
   });
 });
+document.querySelectorAll('#c4-popover .c4-pop-item').forEach(el => {
+  el.addEventListener('click', () => {
+    setBoardTool(el.dataset.tool);
+    closeC4Popover();
+  });
+});
 document.addEventListener('mousedown', e => {
-  const pop = document.getElementById('bpmn-popover');
-  const btn = document.getElementById('bpmn-tool-btn');
-  if (!pop?.classList.contains('open')) return;
-  if (pop.contains(e.target) || btn?.contains(e.target)) return;
-  closeBpmnPopover();
+  const bpmnPop = document.getElementById('bpmn-popover');
+  const bpmnBtn = document.getElementById('bpmn-tool-btn');
+  if (bpmnPop?.classList.contains('open')
+      && !bpmnPop.contains(e.target)
+      && !bpmnBtn?.contains(e.target)) {
+    closeBpmnPopover();
+  }
+  const c4Pop = document.getElementById('c4-popover');
+  const c4Btn = document.getElementById('c4-tool-btn');
+  if (c4Pop?.classList.contains('open')
+      && !c4Pop.contains(e.target)
+      && !c4Btn?.contains(e.target)) {
+    closeC4Popover();
+  }
 });
 
 document.getElementById('new-board-btn').addEventListener('click', () => { createBoard(); closeSidebar(); });

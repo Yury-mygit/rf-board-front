@@ -50,6 +50,9 @@
             <button id="bpmn-tool-btn" class="board-tool" title="BPMN" aria-label="BPMN" aria-haspopup="menu">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><circle cx="5" cy="6" r="2"/><rect x="10" y="4" width="10" height="4" rx="1"/><circle cx="5" cy="18" r="2"/><path d="M5 8v8"/><path d="M15 8v6"/><path d="m13 16 2 2-2 2"/><path d="M7 18h6"/></svg>
             </button>
+            <button id="c4-tool-btn" class="board-tool" title="C4 (архитектура)" aria-label="C4" aria-haspopup="menu">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><rect x="3" y="4" width="8" height="7" rx="1"/><rect x="13" y="4" width="8" height="7" rx="1"/><rect x="3" y="13" width="8" height="7" rx="1"/><rect x="13" y="13" width="8" height="7" rx="1"/></svg>
+            </button>
           </div>
           <div id="bpmn-popover" class="board-tool-popover" role="menu">
             <button class="bpmn-pop-item" data-tool="bpmn_event" title="Событие">
@@ -67,6 +70,32 @@
             <button class="bpmn-pop-item" data-tool="bpmn_flow" title="Поток (соединение): кликни источник, затем цель">
               <span class="pop-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h14"/><path d="m14 7 5 5-5 5"/></svg></span>
               <span>Поток</span>
+            </button>
+          </div>
+          <div id="c4-popover" class="board-tool-popover" role="menu">
+            <button class="c4-pop-item" data-tool="c4_person" title="Person — внешний пользователь / актёр">
+              <span class="pop-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><circle cx="12" cy="7" r="3"/><path d="M5 20c0-3.866 3.134-7 7-7s7 3.134 7 7"/></svg></span>
+              <span>Person</span>
+            </button>
+            <button class="c4-pop-item" data-tool="c4_system" title="Software System — внешняя или in-scope система">
+              <span class="pop-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2"/></svg></span>
+              <span>Software System</span>
+            </button>
+            <button class="c4-pop-item" data-tool="c4_container" title="Container — app, db, processing unit">
+              <span class="pop-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18"/></svg></span>
+              <span>Container</span>
+            </button>
+            <button class="c4-pop-item" data-tool="c4_component" title="Component — модуль внутри Container">
+              <span class="pop-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="4" y="7" width="16" height="10" rx="1.5"/><rect x="2" y="9" width="3" height="2"/><rect x="2" y="13" width="3" height="2"/></svg></span>
+              <span>Component</span>
+            </button>
+            <button class="c4-pop-item" data-tool="c4_boundary" title="System / Container Boundary — пунктирная группа">
+              <span class="pop-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-dasharray="3 2"><rect x="3" y="5" width="18" height="14" rx="2"/></svg></span>
+              <span>Boundary</span>
+            </button>
+            <button class="c4-pop-item" data-tool="c4_relationship" title="Relationship — кликни источник, затем цель">
+              <span class="pop-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h14" stroke-dasharray="3 2"/><path d="m14 7 5 5-5 5"/></svg></span>
+              <span>Relationship</span>
             </button>
           </div>
           <div id="board-canvas" class="board-canvas"></div>
@@ -107,6 +136,13 @@
                 sw
                 <input id="ctx-line-sw" class="ctx-num-input" type="number" min="1" max="20" step="1" value="2"/>
               </label>
+              <span class="ctx-sep"></span>
+              <select id="ctx-line-arrow" class="ctx-line-arrow" title="Стрелка">
+                <option value="none">— нет</option>
+                <option value="end">→ end</option>
+                <option value="both">↔ both</option>
+                <option value="start">← start</option>
+              </select>
             </div>
             <div id="ctx-toolbar-bpmn" class="ctx-toolbar" style="display:none">
               <label class="ctx-num-label" title="Подпись">
