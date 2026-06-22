@@ -72,6 +72,7 @@ export function getSelectedCount() {
 const HANDLE_NAMES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
 const HANDLE_SIZE = 10;
 const FRAME_MIN = 20;
+const NOTE_MIN = 60;
 const TEXT_MIN_W = 40;     // ~3 символа
 const TEXT_H = 32;
 const TEXT_FONT = '14px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
@@ -170,9 +171,10 @@ export function initBoard(container, opts = {}) {
   const ro = new ResizeObserver(() => applyViewBox());
   ro.observe(container);
 
-  svg.addEventListener('mousedown', onDown);
-  window.addEventListener('mousemove', onMove);
-  window.addEventListener('mouseup', onUp);
+  svg.addEventListener('pointerdown', onDown);
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+  window.addEventListener('pointercancel', onUp);
   svg.addEventListener('wheel', onWheel, { passive: false });
   svg.addEventListener('touchstart', onTouchStart, { passive: false });
   svg.addEventListener('touchmove', onTouchMove, { passive: false });
@@ -500,7 +502,7 @@ function updateHandles(frame) {
 function refreshHandlesIfVisible() {
   if (!handlesG || handlesG.style.display === 'none') return;
   const sel = getOnlySelected();
-  if (sel && (sel.type === 'frame' || sel.type === 'rect' || sel.type === 'image' || isBpmnShape(sel.type) || isC4Shape(sel.type))) updateHandles(sel);
+  if (sel && (sel.type === 'frame' || sel.type === 'rect' || sel.type === 'image' || sel.type === 'note' || isBpmnShape(sel.type) || isC4Shape(sel.type))) updateHandles(sel);
 }
 
 export function setBoardCursor(tool) {
@@ -927,7 +929,7 @@ function onDown(e) {
   // Handle resize-handle первым: имеет приоритет над shape-кликом.
   const handleEl = e.target.closest('.resize-handle');
   const onlySel = getOnlySelected();
-  if (handleEl && onlySel && (onlySel.type === 'frame' || onlySel.type === 'rect' || onlySel.type === 'image' || isBpmnShape(onlySel.type) || isC4Shape(onlySel.type))) {
+  if (handleEl && onlySel && (onlySel.type === 'frame' || onlySel.type === 'rect' || onlySel.type === 'image' || onlySel.type === 'note' || isBpmnShape(onlySel.type) || isC4Shape(onlySel.type))) {
     const b = bboxOf(onlySel);
     resize = {
       el: onlySel,
@@ -1107,13 +1109,14 @@ function onMove(e) {
     if (r.handle.includes('e')) { nw = p.x - r.oldX; }
     if (r.handle.includes('n')) { ny = p.y; nh = bottom - p.y; }
     if (r.handle.includes('s')) { nh = p.y - r.oldY; }
-    if (nw < FRAME_MIN) {
-      if (r.handle.includes('w')) nx = right - FRAME_MIN;
-      nw = FRAME_MIN;
+    const minSize = r.el.type === 'note' ? NOTE_MIN : FRAME_MIN;
+    if (nw < minSize) {
+      if (r.handle.includes('w')) nx = right - minSize;
+      nw = minSize;
     }
-    if (nh < FRAME_MIN) {
-      if (r.handle.includes('n')) ny = bottom - FRAME_MIN;
-      nh = FRAME_MIN;
+    if (nh < minSize) {
+      if (r.handle.includes('n')) ny = bottom - minSize;
+      nh = minSize;
     }
     // event/gateway — квадратные: усредняем размер, привязка к актуальному углу.
     if (r.el.type === 'bpmn_event' || r.el.type === 'bpmn_gateway') {
@@ -1209,7 +1212,7 @@ function onMove(e) {
       }
     }
     if (getOnlySelected() === move.el) {
-      if (move.el.type === 'frame' || move.el.type === 'rect' || move.el.type === 'image' || isBpmnShape(move.el.type) || isC4Shape(move.el.type)) updateHandles(move.el);
+      if (move.el.type === 'frame' || move.el.type === 'rect' || move.el.type === 'image' || move.el.type === 'note' || isBpmnShape(move.el.type) || isC4Shape(move.el.type)) updateHandles(move.el);
       onSelectionChanged(move.el, bboxOf(move.el));
     }
   }
@@ -1619,6 +1622,16 @@ function setRectAttrs(node, x, y, w, h) {
       fo.setAttribute('y', y - 22);
       // width у title — динамически по содержимому, не привязан к ширине фрейма
     }
+    // Note: foreignObject без title-класса — растягиваем под bg с padding 8.
+    if (node.dataset && node.dataset.type === 'note') {
+      const noteFo = node.querySelector('foreignObject');
+      if (noteFo) {
+        noteFo.setAttribute('x', x + 8);
+        noteFo.setAttribute('y', y + 8);
+        noteFo.setAttribute('width', Math.max(0, w - 16));
+        noteFo.setAttribute('height', Math.max(0, h - 16));
+      }
+    }
     return;
   }
   node.setAttribute('x', x);
@@ -1727,7 +1740,7 @@ export function deselect() {
 function notifySelectionChanged() {
   if (selectedIds.size === 1) {
     const only = getOnlySelected();
-    if (only.type === 'frame' || only.type === 'rect' || only.type === 'image' || isBpmnShape(only.type) || isC4Shape(only.type)) showHandlesFor(only);
+    if (only.type === 'frame' || only.type === 'rect' || only.type === 'image' || only.type === 'note' || isBpmnShape(only.type) || isC4Shape(only.type)) showHandlesFor(only);
     else hideHandles();
     onSelectionChanged(only, bboxOf(only));
   } else {
@@ -1848,7 +1861,7 @@ export function setElementGeo(id, geo) {
   applyGeo(rec);
   if (rec.type === 'text') resizeTextWidth(rec);
   if (getOnlySelected() === rec) {
-    if (rec.type === 'frame' || rec.type === 'rect' || rec.type === 'image' || isBpmnShape(rec.type) || isC4Shape(rec.type)) updateHandles(rec);
+    if (rec.type === 'frame' || rec.type === 'rect' || rec.type === 'image' || rec.type === 'note' || isBpmnShape(rec.type) || isC4Shape(rec.type)) updateHandles(rec);
     onSelectionChanged(rec, bboxOf(rec));
   }
 }
@@ -1883,7 +1896,7 @@ export function nudgeSelection(dx, dy) {
   }
   const only = getOnlySelected();
   if (only && movingIds.has(only.id)) {
-    if (only.type === 'frame' || only.type === 'rect' || only.type === 'image' || isBpmnShape(only.type) || isC4Shape(only.type)) updateHandles(only);
+    if (only.type === 'frame' || only.type === 'rect' || only.type === 'image' || only.type === 'note' || isBpmnShape(only.type) || isC4Shape(only.type)) updateHandles(only);
     onSelectionChanged(only, bboxOf(only));
   }
   return movingIds;
