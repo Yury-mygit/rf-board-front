@@ -1,5 +1,6 @@
-import { initBoard, setBoardCursor, loadBoard, clearBoard, applyElementAttrs, deselect as boardDeselect, removeElements as boardRemoveElements, exitEdit as boardExitEdit, getAllSelected as boardGetAllSelected, getSelectedCount as boardGetSelectedCount, addFromApi as boardAddFromApi, upsertFromApi as boardUpsertFromApi, removeFromApi as boardRemoveFromApi, getAllElements as boardGetAllElements, setElementGeo as boardSetElementGeo, setElementParent as boardSetElementParent, getElementById as boardGetElementById, getChildrenOf as boardGetChildrenOf, setSelection as boardSetSelection, zoomIn as boardZoomIn, zoomOut as boardZoomOut, fitView as boardFitView, setViewport as boardSetViewport, worldToScreen as boardWorldToScreen, isEditing as boardIsEditing, getFlowsTouchingAny as boardGetFlowsTouchingAny, placeImage as boardPlaceImage, getCanvasCenterWorld as boardGetCanvasCenterWorld, readImageFile as boardReadImageFile, nudgeSelection as boardNudgeSelection, panViewportByScreen as boardPanViewportByScreen, snapshotGeo as boardSnapshotGeo, recomputeParentIdAfterNudge as boardRecomputeParentIdAfterNudge } from './board.js';
+import { initBoard, setBoardCursor, loadBoard, clearBoard, applyElementAttrs, deselect as boardDeselect, removeElements as boardRemoveElements, exitEdit as boardExitEdit, getAllSelected as boardGetAllSelected, getSelectedCount as boardGetSelectedCount, addFromApi as boardAddFromApi, upsertFromApi as boardUpsertFromApi, removeFromApi as boardRemoveFromApi, getAllElements as boardGetAllElements, setElementGeo as boardSetElementGeo, setElementParent as boardSetElementParent, getElementById as boardGetElementById, getChildrenOf as boardGetChildrenOf, setSelection as boardSetSelection, zoomIn as boardZoomIn, zoomOut as boardZoomOut, fitView as boardFitView, setViewport as boardSetViewport, worldToScreen as boardWorldToScreen, isEditing as boardIsEditing, getFlowsTouchingAny as boardGetFlowsTouchingAny, placeImage as boardPlaceImage, getCanvasCenterWorld as boardGetCanvasCenterWorld, readImageFile as boardReadImageFile, nudgeSelection as boardNudgeSelection, panViewportByScreen as boardPanViewportByScreen, snapshotGeo as boardSnapshotGeo, recomputeParentIdAfterNudge as boardRecomputeParentIdAfterNudge, recomputeNoteAutoFitHeight as boardRecomputeNoteAutoFitHeight } from './board.js';
 import { assetUrl, mediaUpload } from './media.js';
+import { initShare, openShareModal, setOnTransferred } from './share.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -257,6 +258,17 @@ function buildContextMenu() {
   numInputHandler(document.getElementById('ctx-sw'), 'strokeWidth');
   numInputHandler(document.getElementById('ctx-line-sw'), 'strokeWidth');
 
+  const autoFitBtn = document.getElementById('ctx-autofit-btn');
+  if (autoFitBtn) autoFitBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    if (!ctxMenuTarget || ctxMenuTarget.type !== 'note') return;
+    const before = ctxMenuTarget.attrs?.autoFit ?? true;
+    const after = !before;
+    commitAttrChange(ctxMenuTarget, { autoFit: before }, { autoFit: after });
+    if (after) boardRecomputeNoteAutoFitHeight(ctxMenuTarget);
+    refreshContextUI();
+  });
+
   // Стрелка у line
   const arrowSel = document.getElementById('ctx-line-arrow');
   arrowSel.addEventListener('change', () => {
@@ -412,6 +424,10 @@ function refreshContextUI() {
     }
     document.getElementById('ctx-rx').value = a.rx !== undefined ? a.rx : defaultRx;
     document.getElementById('ctx-sw').value = a.strokeWidth !== undefined ? a.strokeWidth : defaultSw;
+    if (isNote) {
+      const af = a.autoFit !== undefined ? !!a.autoFit : true;
+      document.getElementById('ctx-autofit-btn')?.classList.toggle('active', af);
+    }
   } else if (ctxMenuTarget.type === 'line') {
     const stroke = a.stroke !== undefined ? a.stroke : '#212529';
     const strokeIcon = document.querySelector('#ctx-toolbar-line .ctx-tool-stroke');
@@ -469,6 +485,7 @@ function refreshContextUI() {
 function showContextMenu(rec, bbox) {
   const menu = document.getElementById('board-context-menu');
   const tbRect = document.getElementById('ctx-toolbar-rect');
+  const tbNote = document.getElementById('ctx-toolbar-note');
   const tbText = document.getElementById('ctx-toolbar-text');
   const tbLine = document.getElementById('ctx-toolbar-line');
   const tbBpmn = document.getElementById('ctx-toolbar-bpmn');
@@ -485,6 +502,7 @@ function showContextMenu(rec, bbox) {
   menu.style.display = '';
   // rect/note используют один toolbar (fill/stroke + rx/sw).
   tbRect.style.display = (rec.type === 'rect' || rec.type === 'note') ? '' : 'none';
+  if (tbNote) tbNote.style.display = rec.type === 'note' ? '' : 'none';
   tbText.style.display = rec.type === 'text' ? '' : 'none';
   tbLine.style.display = rec.type === 'line' ? '' : 'none';
   tbBpmn.style.display = isBpmn ? '' : 'none';
@@ -1568,55 +1586,103 @@ function closeSwipedWrap() {
   }
 }
 
+function _currentBoardRole() {
+  if (!currentBoardId) return null;
+  const b = allBoards.find(x => x.id === currentBoardId);
+  return b ? (b.yourRole || 'read') : null;
+}
+
+function _canWrite(role) { return role === 'owner' || role === 'write' || role === 'curator'; }
+function _canManage(role) { return role === 'owner' || role === 'curator'; }
+
+const ROLE_BADGE = {
+  owner:   { label: 'owner',   title: 'Вы владелец',   cls: 'role-owner' },
+  curator: { label: 'curator', title: 'Curator (видит всё)', cls: 'role-curator' },
+  write:   { label: 'write',   title: 'Расшарено, write', cls: 'role-write' },
+  read:    { label: 'read',    title: 'Расшарено, read-only', cls: 'role-read' },
+};
+
 function renderBoardsList() {
   const list = document.getElementById('board-list');
   list.innerHTML = '';
   openSwipedWrap = null;
+  // BRD-1 close: share-кнопка полностью скрыта для не-manage (не disabled).
+  // Non-manage юзер видит disabled-кнопку и клик без реакции — конфьюзит.
+  // Полный dynamic-import гейт (модуль вне бандла) — BRD-3.
+  const shareBtn = document.getElementById('share-board-btn');
+  if (shareBtn) {
+    const role = _currentBoardRole();
+    const canManage = _canManage(role);
+    shareBtn.hidden = !currentBoardId || !canManage;
+    if (canManage) {
+      shareBtn.disabled = false;
+      shareBtn.title = 'Поделиться текущей доской';
+    }
+  }
+  // 7c: переключаем body-class по роли — для CSS-гейта тулбара
+  // (read-only прячет элемент-tools).
+  const curRole = _currentBoardRole();
+  document.body.classList.toggle('board-readonly', curRole === 'read');
   if (!allBoards.length) {
     list.innerHTML = '<div class="hint">Нет досок</div>';
     return;
   }
   for (const b of allBoards) {
+    const role = b.yourRole || 'read';
+    const canManage = _canManage(role); // delete + share + transfer
+    const canWrite = _canWrite(role);   // rename + reorder + element CRUD
+
     const wrap = document.createElement('div');
     wrap.className = 'board-item-wrap';
     wrap.dataset.id = b.id;
-    // Drag-drop reorder (desktop). Touch остаётся swipe-to-delete.
-    wrap.draggable = true;
-    wrap.addEventListener('dragstart', (e) => {
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', b.id);
-      wrap.classList.add('dragging');
-    });
-    wrap.addEventListener('dragend', () => wrap.classList.remove('dragging'));
-    wrap.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      wrap.classList.add('drag-over');
-    });
-    wrap.addEventListener('dragleave', () => wrap.classList.remove('drag-over'));
-    wrap.addEventListener('drop', (e) => {
-      e.preventDefault();
-      wrap.classList.remove('drag-over');
-      const fromId = e.dataTransfer.getData('text/plain');
-      if (fromId && fromId !== b.id) reorderBoards(fromId, b.id);
-    });
+    // Drag-drop reorder только для write+ (PATCH order_index требует 300).
+    if (canWrite) {
+      wrap.draggable = true;
+      wrap.addEventListener('dragstart', (e) => {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', b.id);
+        wrap.classList.add('dragging');
+      });
+      wrap.addEventListener('dragend', () => wrap.classList.remove('dragging'));
+      wrap.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        wrap.classList.add('drag-over');
+      });
+      wrap.addEventListener('dragleave', () => wrap.classList.remove('drag-over'));
+      wrap.addEventListener('drop', (e) => {
+        e.preventDefault();
+        wrap.classList.remove('drag-over');
+        const fromId = e.dataTransfer.getData('text/plain');
+        if (fromId && fromId !== b.id) reorderBoards(fromId, b.id);
+      });
+    }
 
-    const actions = document.createElement('div');
-    actions.className = 'board-item-actions';
-    const delBtn = document.createElement('button');
-    delBtn.className = 'board-item-delete';
-    delBtn.type = 'button';
-    delBtn.textContent = 'Удалить';
-    delBtn.addEventListener('click', e => {
-      e.stopPropagation();
-      deleteBoardAction(b.id);
-    });
-    actions.appendChild(delBtn);
-    wrap.appendChild(actions);
+    // Swipe-to-delete + delete-button — только для owner/curator (backend
+    // 403'нет write-grant'ам). Read/write users не видят delete-action.
+    if (canManage) {
+      const actions = document.createElement('div');
+      actions.className = 'board-item-actions';
+      const delBtn = document.createElement('button');
+      delBtn.className = 'board-item-delete';
+      delBtn.type = 'button';
+      delBtn.textContent = 'Удалить';
+      delBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        deleteBoardAction(b.id);
+      });
+      actions.appendChild(delBtn);
+      wrap.appendChild(actions);
+    }
 
     const item = document.createElement('div');
     item.className = 'board-item' + (b.id === currentBoardId ? ' active' : '');
-    item.textContent = b.title || 'Без названия';
+    // 7c: badge с ролью справа от названия (если не owner — чтобы
+    // отличать свои/чужие; owner-badge показываем тоже для ясности).
+    const badge = ROLE_BADGE[role] || ROLE_BADGE.read;
+    item.innerHTML =
+      `<span class="board-item-title">${escapeHtmlBoard(b.title || 'Без названия')}</span>` +
+      `<span class="board-item-role ${badge.cls}" title="${badge.title}">${badge.label}</span>`;
     item.addEventListener('click', () => {
       if (item.dataset.swipeHandled === '1') { delete item.dataset.swipeHandled; return; }
       if (wrap.classList.contains('swiped')) { closeSwipedWrap(); return; }
@@ -1626,13 +1692,19 @@ function renderBoardsList() {
     item.addEventListener('dblclick', e => {
       if (b.id !== currentBoardId) return;
       if (wrap.classList.contains('swiped')) return;
+      if (!canWrite) return; // read-only не переименовывает
       e.preventDefault();
       startBoardRename(item, b);
     });
-    attachSwipeToDelete(wrap, item);
+    if (canManage) attachSwipeToDelete(wrap, item);
     wrap.appendChild(item);
     list.appendChild(wrap);
   }
+}
+
+function escapeHtmlBoard(s) {
+  return String(s).replace(/[<>&"]/g, c =>
+    ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
 }
 
 async function reorderBoards(fromId, toId) {
@@ -1857,6 +1929,27 @@ document.addEventListener('mousedown', e => {
 });
 
 document.getElementById('new-board-btn').addEventListener('click', () => { createBoard(); closeSidebar(); });
+
+// Карта #130 Stage 7a + 7b: share modal на текущей доске + transfer ownership.
+initShare();
+setOnTransferred(async () => {
+  // После transfer'а owner поменялся. Перечитываем boards-list (owner_uuid
+  // обновится → 7c hide-controls сработает). Элементы доски не трогаем —
+  // они не поменялись. На следующий PATCH backend сам пересчитает права.
+  try {
+    allBoards = await api.boards();
+    renderBoardsList();
+    setStatus('Владелец передан');
+  } catch (e) {
+    setStatus(`Ошибка после transfer: ${e.message}`, true);
+  }
+});
+const shareBtn = document.getElementById('share-board-btn');
+shareBtn.addEventListener('click', () => {
+  if (!currentBoardId) return;
+  const board = allBoards.find(b => b.id === currentBoardId);
+  if (board) openShareModal(board);
+});
 
 function isMobile() { return window.matchMedia('(max-width: 768px)').matches; }
 function closeSidebar() { document.body.classList.remove('board-sidebar-open'); }

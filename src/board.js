@@ -73,6 +73,8 @@ const HANDLE_NAMES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
 const HANDLE_SIZE = 10;
 const FRAME_MIN = 20;
 const NOTE_MIN = 60;
+const NOTE_MIN_HARD = 24;
+const NOTE_MIN_H = 24;
 const TEXT_MIN_W = 40;     // ~3 символа
 const TEXT_H = 32;
 const TEXT_FONT = '14px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
@@ -502,7 +504,7 @@ function updateHandles(frame) {
 function refreshHandlesIfVisible() {
   if (!handlesG || handlesG.style.display === 'none') return;
   const sel = getOnlySelected();
-  if (sel && (sel.type === 'frame' || sel.type === 'rect' || sel.type === 'image' || sel.type === 'note' || isBpmnShape(sel.type) || isC4Shape(sel.type))) updateHandles(sel);
+  if (sel && (sel.type === 'frame' || sel.type === 'rect' || sel.type === 'image' || sel.type === 'note' || sel.type === 'text' || isBpmnShape(sel.type) || isC4Shape(sel.type))) updateHandles(sel);
 }
 
 export function setBoardCursor(tool) {
@@ -704,14 +706,26 @@ function renderFromApi(e) {
     return;
   }
   if (e.type === 'text') {
-    const rec = placeText(e.x, e.y, { id: e.id, text: attrs.text || '', focus: false, parentId });
+    // Card #134: wrap-mode прокидываем при создании, чтобы placeText
+    // сразу собрал textarea + top-anchored fo с правильной геометрией.
+    const wrap = !!(attrs && attrs.wrap);
+    const rec = placeText(e.x, e.y, {
+      id: e.id,
+      text: attrs.text || '',
+      focus: false,
+      parentId,
+      wrap,
+      w: wrap ? e.w : undefined,
+      h: wrap ? e.h : undefined,
+    });
     rec.attrs = attrs;
     applyElementAttrs(rec);
+    if (wrap) recomputeTextWrapHeight(rec);
     return;
   }
   if (e.type === 'note') {
-    const rec = placeNote(e.x, e.y, { id: e.id, w: e.w, h: e.h, text: attrs.text || '', focus: false, parentId });
-    rec.attrs = attrs;
+    const rec = placeNote(e.x, e.y, { id: e.id, w: e.w, h: e.h, text: attrs.text || '', focus: false, parentId, autoFit: attrs.autoFit });
+    rec.attrs = { autoFit: true, ...attrs };
     applyElementAttrs(rec);
     return;
   }
@@ -853,6 +867,11 @@ function bboxOf(rec) {
       h: Math.abs(rec.y2 - rec.y1),
     };
   }
+  // Card #134: label-mode text держит rec.y как baseline-center,
+  // wrap-mode (и все остальные типы) — как top-left.
+  if (rec.type === 'text' && !(rec.attrs && rec.attrs.wrap)) {
+    return { x: rec.x, y: rec.y - rec.h / 2, w: rec.w, h: rec.h };
+  }
   return { x: rec.x, y: rec.y, w: rec.w, h: rec.h };
 }
 
@@ -929,7 +948,14 @@ function onDown(e) {
   // Handle resize-handle первым: имеет приоритет над shape-кликом.
   const handleEl = e.target.closest('.resize-handle');
   const onlySel = getOnlySelected();
-  if (handleEl && onlySel && (onlySel.type === 'frame' || onlySel.type === 'rect' || onlySel.type === 'image' || onlySel.type === 'note' || isBpmnShape(onlySel.type) || isC4Shape(onlySel.type))) {
+  if (handleEl && onlySel && (onlySel.type === 'frame' || onlySel.type === 'rect' || onlySel.type === 'image' || onlySel.type === 'note' || onlySel.type === 'text' || isBpmnShape(onlySel.type) || isC4Shape(onlySel.type))) {
+    // Card #134: первое таскание handle на label-text → конверсия в
+    // wrap-mode. Меняем input → textarea, перепривязываем rec.y от
+    // baseline-center к top, attrs.wrap=true. После этого resize идёт
+    // как для rect/note (top-anchored).
+    if (onlySel.type === 'text' && !(onlySel.attrs && onlySel.attrs.wrap)) {
+      convertTextToWrap(onlySel);
+    }
     const b = bboxOf(onlySel);
     resize = {
       el: onlySel,
@@ -1109,14 +1135,20 @@ function onMove(e) {
     if (r.handle.includes('e')) { nw = p.x - r.oldX; }
     if (r.handle.includes('n')) { ny = p.y; nh = bottom - p.y; }
     if (r.handle.includes('s')) { nh = p.y - r.oldY; }
-    const minSize = r.el.type === 'note' ? NOTE_MIN : FRAME_MIN;
-    if (nw < minSize) {
-      if (r.handle.includes('w')) nx = right - minSize;
-      nw = minSize;
+    let minW, minH;
+    if (r.el.type === 'note') {
+      minW = noteMinWidth(r.el);
+      minH = NOTE_MIN_H;
+    } else {
+      minW = minH = FRAME_MIN;
     }
-    if (nh < minSize) {
-      if (r.handle.includes('n')) ny = bottom - minSize;
-      nh = minSize;
+    if (nw < minW) {
+      if (r.handle.includes('w')) nx = right - minW;
+      nw = minW;
+    }
+    if (nh < minH) {
+      if (r.handle.includes('n')) ny = bottom - minH;
+      nh = minH;
     }
     // event/gateway — квадратные: усредняем размер, привязка к актуальному углу.
     if (r.el.type === 'bpmn_event' || r.el.type === 'bpmn_gateway') {
@@ -1212,7 +1244,7 @@ function onMove(e) {
       }
     }
     if (getOnlySelected() === move.el) {
-      if (move.el.type === 'frame' || move.el.type === 'rect' || move.el.type === 'image' || move.el.type === 'note' || isBpmnShape(move.el.type) || isC4Shape(move.el.type)) updateHandles(move.el);
+      if (move.el.type === 'frame' || move.el.type === 'rect' || move.el.type === 'image' || move.el.type === 'note' || move.el.type === 'text' || isBpmnShape(move.el.type) || isC4Shape(move.el.type)) updateHandles(move.el);
       onSelectionChanged(move.el, bboxOf(move.el));
     }
   }
@@ -1264,7 +1296,15 @@ function onUp(e) {
     const childParentsBefore = resize.childParentsBefore;
     resize = null;
     if (target.type === 'frame') recomputeChildrenAfterResize(target);
+    // Note: ручной resize выключает autoFit (пользователь выразил намерение
+    // задать размер сам). Иначе на следующий input высота схлопнется.
+    if (target.type === 'note' && target.attrs && target.attrs.autoFit) {
+      target.attrs.autoFit = false;
+    }
     onElementChanged(target);
+    if (target.type === 'note' && getOnlySelected() === target) {
+      onSelectionChanged(target, bboxOf(target));
+    }
     const after = snapshotGeoLocal(target);
     const childParents = [];
     if (childParentsBefore) {
@@ -1457,16 +1497,17 @@ export function applyElementAttrs(rec) {
     return;
   }
   if (rec.type === 'text') {
-    const input = rec.node.querySelector('input.board-text-input');
-    if (!input) return;
+    // Card #134: wrap-mode хранит value в textarea (а не input).
+    const el = rec.node.querySelector('textarea.board-text-textarea, input.board-text-input');
+    if (!el) return;
     const desiredText = a.text == null ? '' : a.text;
-    if (input.value !== desiredText) input.value = desiredText;
-    if (a.color !== undefined) input.style.color = a.color === null ? '' : a.color;
-    input.style.fontWeight = a.bold ? '700' : '';
-    input.style.fontStyle = a.italic ? 'italic' : '';
-    input.style.textDecoration = a.underline ? 'underline' : '';
-    if (a.fontSize !== undefined) input.style.fontSize = a.fontSize + 'px';
-    resizeTextWidth(rec);
+    if (el.value !== desiredText) el.value = desiredText;
+    if (a.color !== undefined) el.style.color = a.color === null ? '' : a.color;
+    el.style.fontWeight = a.bold ? '700' : '';
+    el.style.fontStyle = a.italic ? 'italic' : '';
+    el.style.textDecoration = a.underline ? 'underline' : '';
+    if (a.fontSize !== undefined) el.style.fontSize = a.fontSize + 'px';
+    if (a.wrap) recomputeTextWrapHeight(rec); else resizeTextWidth(rec);
     return;
   }
   if (rec.type === 'note') {
@@ -1481,6 +1522,7 @@ export function applyElementAttrs(rec) {
     if (a.strokeWidth !== undefined) bg.setAttribute('stroke-width', a.strokeWidth);
     if (a.color !== undefined) ta.style.color = a.color === null ? '' : a.color;
     if (a.fontSize !== undefined) ta.style.fontSize = a.fontSize + 'px';
+    if (a.autoFit) requestAnimationFrame(() => recomputeNoteAutoFitHeight(rec));
     return;
   }
   if (rec.type === 'frame') {
@@ -1630,6 +1672,18 @@ function setRectAttrs(node, x, y, w, h) {
         noteFo.setAttribute('y', y + 8);
         noteFo.setAttribute('width', Math.max(0, w - 16));
         noteFo.setAttribute('height', Math.max(0, h - 16));
+      }
+    }
+    // Card #134: text wrap-mode — fo top-anchored, занимает всю rec-bbox.
+    // Setter вызывается во время resize, который для text доступен
+    // ТОЛЬКО после конверсии в wrap-mode (см. convertTextToWrap).
+    if (node.dataset && node.dataset.type === 'text') {
+      const textFo = node.querySelector('foreignObject');
+      if (textFo) {
+        textFo.setAttribute('x', x);
+        textFo.setAttribute('y', y);
+        textFo.setAttribute('width', Math.max(0, w));
+        textFo.setAttribute('height', Math.max(0, h));
       }
     }
     return;
@@ -1821,8 +1875,11 @@ function applyGeo(rec) {
   if (rec.type === 'text') {
     const fo = rec.node.querySelector('foreignObject');
     const hit = rec.node.querySelector('.board-edit-hit');
-    if (fo) { fo.setAttribute('x', rec.x); fo.setAttribute('y', rec.y - rec.h / 2); fo.setAttribute('width', rec.w); fo.setAttribute('height', rec.h); }
-    if (hit) { hit.setAttribute('x', rec.x); hit.setAttribute('y', rec.y - rec.h / 2); hit.setAttribute('width', rec.w); hit.setAttribute('height', rec.h); }
+    // Card #134: wrap-mode → rec.y = top, label-mode → rec.y = baseline center.
+    const wrap = rec.attrs && rec.attrs.wrap;
+    const foY = wrap ? rec.y : rec.y - rec.h / 2;
+    if (fo) { fo.setAttribute('x', rec.x); fo.setAttribute('y', foY); fo.setAttribute('width', rec.w); fo.setAttribute('height', rec.h); }
+    if (hit) { hit.setAttribute('x', rec.x); hit.setAttribute('y', foY); hit.setAttribute('width', rec.w); hit.setAttribute('height', rec.h); }
     return;
   }
   if (rec.type === 'note') {
@@ -1859,9 +1916,9 @@ export function setElementGeo(id, geo) {
   }
   rec.parentId = geo.parentId || null;
   applyGeo(rec);
-  if (rec.type === 'text') resizeTextWidth(rec);
+  if (rec.type === 'text' && !(rec.attrs && rec.attrs.wrap)) resizeTextWidth(rec);
   if (getOnlySelected() === rec) {
-    if (rec.type === 'frame' || rec.type === 'rect' || rec.type === 'image' || rec.type === 'note' || isBpmnShape(rec.type) || isC4Shape(rec.type)) updateHandles(rec);
+    if (rec.type === 'frame' || rec.type === 'rect' || rec.type === 'image' || rec.type === 'note' || rec.type === 'text' || isBpmnShape(rec.type) || isC4Shape(rec.type)) updateHandles(rec);
     onSelectionChanged(rec, bboxOf(rec));
   }
 }
@@ -1995,24 +2052,38 @@ function placeText(x, y, opts = {}) {
   g.classList.add('board-shape');
   g.dataset.type = 'text';
 
+  // Card #134: wrap-mode — textarea + top-anchored fo (rec.y = top
+  // left, не baseline center как у label). Геометрия задаётся
+  // вызывающим через opts.w/opts.h.
+  const wrap = !!opts.wrap;
+  const initW = wrap ? (opts.w || 200) : TEXT_MIN_W;
+  const initH = wrap ? (opts.h || TEXT_H) : TEXT_H;
+  const foY = wrap ? y : y - 12;
+
   const fo = document.createElementNS(SVG_NS, 'foreignObject');
   fo.setAttribute('x', x);
-  fo.setAttribute('y', y - 12);
-  fo.setAttribute('width', TEXT_MIN_W);
-  fo.setAttribute('height', TEXT_H);
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.placeholder = '';
-  input.className = 'board-text-input';
-  if (opts.text) input.value = opts.text;
-  fo.appendChild(input);
+  fo.setAttribute('y', foY);
+  fo.setAttribute('width', initW);
+  fo.setAttribute('height', initH);
+  let inputEl;
+  if (wrap) {
+    inputEl = document.createElement('textarea');
+    inputEl.className = 'board-text-textarea';
+  } else {
+    inputEl = document.createElement('input');
+    inputEl.type = 'text';
+    inputEl.className = 'board-text-input';
+  }
+  inputEl.placeholder = '';
+  if (opts.text) inputEl.value = opts.text;
+  fo.appendChild(inputEl);
 
   const hit = document.createElementNS(SVG_NS, 'rect');
   hit.classList.add('board-edit-hit');
   hit.setAttribute('x', x);
-  hit.setAttribute('y', y - 12);
-  hit.setAttribute('width', TEXT_MIN_W);
-  hit.setAttribute('height', TEXT_H);
+  hit.setAttribute('y', foY);
+  hit.setAttribute('width', initW);
+  hit.setAttribute('height', initH);
 
   g.appendChild(fo);
   g.appendChild(hit);
@@ -2023,20 +2094,26 @@ function placeText(x, y, opts = {}) {
     type: 'text',
     node: g,
     x, y,
-    w: TEXT_MIN_W, h: TEXT_H,
-    attrs: { text: opts.text || '' },
+    w: initW, h: initH,
+    attrs: { text: opts.text || '', ...(wrap ? { wrap: true } : {}) },
     parentId: opts.parentId || null,
   };
   g.dataset.id = rec.id;
   elements.push(rec);
-  resizeTextWidth(rec); // подгоняем ширину под initial value
+  if (!wrap) resizeTextWidth(rec);
 
-  input.addEventListener('input', () => {
-    rec.attrs.text = input.value;
-    resizeTextWidth(rec);
+  inputEl.addEventListener('input', () => {
+    rec.attrs.text = inputEl.value;
+    if (rec.attrs.wrap) {
+      // wrap-mode: width зафиксирована пользователем, h автогрит под
+      // scrollHeight textarea (как у note autoFit).
+      recomputeTextWrapHeight(rec);
+    } else {
+      resizeTextWidth(rec);
+    }
     onElementChanged(rec);
   });
-  attachTextCommit(rec, input, 'text');
+  attachTextCommit(rec, inputEl, 'text');
   g.addEventListener('dblclick', e => { enterEdit(rec); e.stopPropagation(); });
 
   if (!opts.id) {
@@ -2046,6 +2123,54 @@ function placeText(x, y, opts = {}) {
     enterEdit(rec);
   }
   return rec;
+}
+
+// Card #134: конверсия label-text → wrap-text in-place.
+// label: <input>, rec.y = baseline center, w auto-fit под value.
+// wrap : <textarea>, rec.y = top, w/h явные.
+// Триггер — corner-drag первый раз на label-text.
+function convertTextToWrap(rec) {
+  if (rec.type !== 'text' || (rec.attrs && rec.attrs.wrap)) return;
+  const fo = rec.node.querySelector('foreignObject');
+  if (!fo) return;
+  const oldInput = fo.querySelector('input.board-text-input');
+  const value = oldInput ? oldInput.value : (rec.attrs && rec.attrs.text) || '';
+  const ta = document.createElement('textarea');
+  ta.className = 'board-text-textarea';
+  ta.value = value;
+  if (oldInput) {
+    fo.replaceChild(ta, oldInput);
+  } else {
+    fo.appendChild(ta);
+  }
+  // Сдвиг семантики rec.y: было baseline-center, стало top fo.
+  rec.y = rec.y - rec.h / 2;
+  rec.attrs = { ...(rec.attrs || {}), wrap: true };
+  applyGeo(rec);
+  // Передёргиваем input-handler — старый слушал input на <input>, теперь
+  // нужен на textarea. Привязываем тот же обработчик через replay.
+  ta.addEventListener('input', () => {
+    rec.attrs.text = ta.value;
+    recomputeTextWrapHeight(rec);
+    onElementChanged(rec);
+  });
+  attachTextCommit(rec, ta, 'text');
+}
+
+// Card #134: пересчёт высоты wrap-text textarea под content scrollHeight.
+function recomputeTextWrapHeight(rec) {
+  if (rec.type !== 'text' || !(rec.attrs && rec.attrs.wrap)) return;
+  const ta = rec.node.querySelector('textarea.board-text-textarea');
+  if (!ta) return;
+  const prevH = ta.style.height;
+  ta.style.height = '0px';
+  const lineH = parseFloat(getComputedStyle(ta).lineHeight) || 18;
+  const newH = Math.max(ta.scrollHeight, lineH);
+  ta.style.height = prevH;
+  if (Math.abs(newH - rec.h) < 0.5) return;
+  rec.h = newH;
+  applyGeo(rec);
+  if (getOnlySelected() === rec) updateHandles(rec);
 }
 
 export function getCanvasCenterWorld() {
@@ -2247,7 +2372,7 @@ function placeNote(x, y, opts = {}) {
     type: 'note',
     node: g,
     x, y, w: W, h: H,
-    attrs: { text: opts.text || '' },
+    attrs: { text: opts.text || '', autoFit: opts.autoFit ?? true },
     parentId: opts.parentId || null,
   };
   g.dataset.id = rec.id;
@@ -2255,6 +2380,7 @@ function placeNote(x, y, opts = {}) {
 
   ta.addEventListener('input', () => {
     rec.attrs.text = ta.value;
+    if (rec.attrs.autoFit) recomputeNoteAutoFitHeight(rec);
     onElementChanged(rec);
   });
   attachTextCommit(rec, ta, 'text');
@@ -2265,6 +2391,44 @@ function placeNote(x, y, opts = {}) {
     if (f) rec.parentId = f.id;
     onElementCreated(rec);
     enterEdit(rec);
+  } else if (rec.attrs.autoFit && (opts.text || '').length > 0) {
+    // На load из API: подогнать h под фактический scrollHeight (textarea
+    // могла быть сохранена с большей высотой, чем нужно после wrap policy).
+    requestAnimationFrame(() => recomputeNoteAutoFitHeight(rec));
   }
   return rec;
+}
+
+// Подгоняет rec.h note под scrollHeight textarea + padding fo (8+8).
+// Вызывается из input handler (если attrs.autoFit) и из toggle-button.
+// Не персистит сам — вызывающий делает onElementChanged.
+export function recomputeNoteAutoFitHeight(rec) {
+  if (rec.type !== 'note') return;
+  const ta = rec.node.querySelector('textarea.board-note-textarea');
+  if (!ta) return;
+  // height:auto заставляет textarea пересчитать scrollHeight под content.
+  const prevH = ta.style.height;
+  ta.style.height = '0px';
+  const innerH = Math.max(ta.scrollHeight, parseFloat(getComputedStyle(ta).lineHeight) || 18);
+  ta.style.height = prevH;
+  const newH = innerH + 16; // fo padding 8 + 8
+  if (Math.abs(newH - rec.h) < 0.5) return;
+  rec.h = newH;
+  applyGeo(rec);
+  if (getOnlySelected() === rec) updateHandles(rec);
+}
+
+function noteMinWidth(rec) {
+  if (rec.type !== 'note') return NOTE_MIN_HARD;
+  const ta = rec.node && rec.node.querySelector('textarea.board-note-textarea');
+  if (!ta) return NOTE_MIN_HARD;
+  const cs = getComputedStyle(ta);
+  const font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+  const words = ((rec.attrs && rec.attrs.text) || '').split(/\s+/).filter(Boolean);
+  let max = 0;
+  for (const w of words) {
+    const wd = measureWidth(w, font);
+    if (wd > max) max = wd;
+  }
+  return Math.max(Math.ceil(max + 18), NOTE_MIN_HARD);
 }

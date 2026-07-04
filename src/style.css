@@ -612,6 +612,27 @@ body.board-sidebar-open .board-item { background: var(--surface); }
   line-height: 1.4;
 }
 
+/* Card #134: wrap-mode для text — textarea без рамки/фона, line-height
+   как у note. Используется когда attrs.wrap=true (corner-drag из label
+   или API-создание с wrap=true). */
+.board-text-textarea {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: transparent;
+  outline: none;
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  resize: none;
+  padding: 0;
+  margin: 0;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow: hidden;
+}
+
 .board-tools {
   position: absolute;
   left: 12px;
@@ -685,7 +706,7 @@ body.board-sidebar-open .board-sidebar-backdrop { display: block; }
 
 @media (max-width: 768px) {
   .board-sidebar-toggle { display: flex; }
-  .board-tools { left: 52px; }
+  .board-tools { left: 6px; }
   .board-sidebar {
     position: absolute;
     top: 0;
@@ -1100,3 +1121,142 @@ body.board-inspect-collapsed .inspect-toggle { transform: rotate(180deg); }
   opacity: .75;
 }
 
+
+/* ── Share modal (#130 Stage 7a) ─────────────────────────────────────────── */
+.share-modal {
+  position: fixed; inset: 0; z-index: 1000;
+  display: flex; align-items: center; justify-content: center;
+}
+.share-modal[hidden] { display: none; }
+.share-backdrop {
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,0.45);
+}
+.share-content {
+  position: relative; z-index: 1;
+  background: var(--surface, #fff); color: var(--text, #222);
+  border-radius: 8px; padding: 20px;
+  width: min(720px, 94vw); max-height: 88vh; overflow-y: auto;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+}
+.share-head {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 16px;
+}
+.share-head h2 {
+  margin: 0; font-size: 16px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 580px;
+}
+.share-close-x {
+  background: transparent; border: 0; font-size: 24px; line-height: 1;
+  cursor: pointer; color: var(--text-muted, #888); padding: 0 4px;
+}
+.share-close-x:hover { color: var(--text, #222); }
+.share-section { margin-bottom: 20px; }
+.share-section:last-child { margin-bottom: 0; }
+.share-section h3 {
+  margin: 0 0 8px; font-size: 12px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-muted, #888);
+}
+.share-form {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 8px; align-items: center;
+}
+.share-form select, .share-form input {
+  padding: 6px 8px; border: 1px solid var(--border, #ccc);
+  border-radius: 4px; font: inherit; background: var(--bg, #fff);
+  color: var(--text, #222);
+}
+.share-form button.primary {
+  padding: 6px 14px; background: var(--accent, #2563eb); color: #fff;
+  border: 0; border-radius: 4px; cursor: pointer; font: inherit;
+}
+.share-form button.primary:hover { filter: brightness(1.05); }
+.share-err {
+  margin-top: 8px; padding: 6px 10px;
+  background: #fee; color: #c00; border-radius: 4px; font-size: 13px;
+}
+.share-grants-list { display: flex; flex-direction: column; gap: 6px; }
+.share-grant-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto auto;
+  gap: 10px; align-items: center;
+  padding: 8px 10px; background: var(--bg, #f5f5f5);
+  border-radius: 4px; font-size: 13px;
+}
+.share-grant-kind {
+  font-size: 11px; padding: 2px 6px; border-radius: 3px;
+  background: var(--border-soft, #e5e5e5); color: var(--text-muted, #555);
+  text-transform: uppercase; letter-spacing: 0.03em;
+}
+.share-grant-value {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.share-grant-status {
+  font-size: 11px; color: var(--text-muted, #888);
+}
+.share-grant-status.bound { color: #0a0; }
+.share-grant-level {
+  font-size: 11px; padding: 2px 6px; border-radius: 3px;
+  background: var(--accent-soft, #dbeafe); color: var(--accent, #2563eb);
+}
+.share-grant-del {
+  background: transparent; border: 1px solid var(--border, #ccc);
+  border-radius: 4px; padding: 2px 8px; cursor: pointer;
+  font-size: 12px; color: var(--text-muted, #888);
+}
+.share-grant-del:hover {
+  background: #fee; color: #c00; border-color: #c00;
+}
+
+.share-transfer-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px; align-items: center;
+}
+.share-transfer-form select {
+  padding: 6px 8px; border: 1px solid var(--border, #ccc);
+  border-radius: 4px; font: inherit; background: var(--bg, #fff);
+  color: var(--text, #222);
+}
+.share-transfer-form button.danger {
+  padding: 6px 14px; background: #c92a2a; color: #fff;
+  border: 0; border-radius: 4px; cursor: pointer; font: inherit;
+}
+.share-transfer-form button.danger:hover { background: #a51919; }
+.share-transfer-form button.danger:disabled {
+  background: #aaa; cursor: not-allowed;
+}
+#share-transfer-hint {
+  margin-top: 6px; font-size: 12px; color: var(--text-muted, #888);
+}
+
+/* Stage 7c: badge + read-only гейт тулбара (#130). */
+.board-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.board-item-title {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.board-item-role {
+  font-size: 10px; padding: 1px 5px; border-radius: 3px;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  background: var(--border-soft, #e5e5e5); color: var(--text-muted, #666);
+  flex-shrink: 0;
+}
+.board-item-role.role-owner   { background: #d1fadf; color: #0a6a3a; }
+.board-item-role.role-curator { background: #ffe7c2; color: #8a5a00; }
+.board-item-role.role-write   { background: #dbeafe; color: #1d4ed8; }
+.board-item-role.role-read    { background: #e5e7eb; color: #4b5563; }
+
+/* Read-only режим: прячем element-tools и BPMN/C4 picker'ы. */
+body.board-readonly .board-tools,
+body.board-readonly #frame-tools,
+body.board-readonly #bpmn-popover,
+body.board-readonly #c4-popover {
+  display: none !important;
+}

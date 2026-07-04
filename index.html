@@ -18,6 +18,7 @@
           <div id="board-list"><div class="hint">Загрузка…</div></div>
           <div class="board-sidebar-toolbar">
             <button id="new-board-btn" title="Создать доску">+ Новая доска</button>
+            <button id="share-board-btn" title="Поделиться текущей доской" hidden>📤 Поделиться</button>
           </div>
         </aside>
         <div id="board-sidebar-backdrop" class="board-sidebar-backdrop"></div>
@@ -127,6 +128,11 @@
                 <input id="ctx-sw" class="ctx-num-input" type="number" min="0" max="20" step="1" value="2"/>
               </label>
             </div>
+            <div id="ctx-toolbar-note" class="ctx-toolbar" style="display:none">
+              <button id="ctx-autofit-btn" class="ctx-tool" title="Подгонять высоту под текст">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v8"/><path d="M9 8l3 3 3-3"/><path d="M12 21v-8"/><path d="M9 16l3-3 3 3"/><path d="M5 12h14"/></svg>
+              </button>
+            </div>
             <div id="ctx-toolbar-line" class="ctx-toolbar" style="display:none">
               <button id="ctx-line-color-btn" class="ctx-tool" title="Цвет линии">
                 <span class="ctx-tool-stroke"></span>
@@ -204,6 +210,56 @@
       </section>
     </main>
   </div>
+
+  <!-- Карта #130 Stage 7a: share modal -->
+  <div id="share-modal" class="share-modal" hidden>
+    <div class="share-backdrop" data-share-close></div>
+    <div class="share-content">
+      <div class="share-head">
+        <h2 id="share-title">Поделиться доской</h2>
+        <button type="button" class="share-close-x" data-share-close aria-label="Закрыть">×</button>
+      </div>
+      <div class="share-section">
+        <h3>Добавить доступ</h3>
+        <form id="share-form" class="share-form">
+          <select id="share-kind" required>
+            <option value="email">по почте</option>
+            <option value="telegram">по telegram-id</option>
+            <option value="handle">по handle</option>
+          </select>
+          <input id="share-value" type="text" placeholder="user@example.com" required maxlength="255"/>
+          <select id="share-level" required>
+            <option value="300">пишет (write)</option>
+            <option value="200">читает (read)</option>
+          </select>
+          <button type="submit" class="primary">Поделиться</button>
+        </form>
+        <div id="share-form-err" class="share-err" hidden></div>
+      </div>
+      <div class="share-section">
+        <h3>Расшарено с</h3>
+        <div id="share-grants-list" class="share-grants-list">
+          <div class="hint">Загрузка…</div>
+        </div>
+      </div>
+      <div class="share-section" id="share-transfer-section">
+        <h3>Передать владельца</h3>
+        <form id="share-transfer-form" class="share-transfer-form">
+          <select id="share-transfer-target" required>
+            <option value="">— выбери получателя из расшаренных —</option>
+          </select>
+          <button type="submit" class="danger">Передать</button>
+        </form>
+        <div id="share-transfer-hint" class="hint">
+          Доступны только те, кто уже хотя бы раз заходил в доску
+          (привязан UUID). После передачи ты становишься обычным
+          пользователем с правом «write».
+        </div>
+        <div id="share-transfer-err" class="share-err" hidden></div>
+      </div>
+    </div>
+  </div>
+
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>
