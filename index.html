@@ -19,6 +19,7 @@
           <div class="board-sidebar-toolbar">
             <button id="new-board-btn" title="Создать доску">+ Новая доска</button>
             <button id="share-board-btn" title="Поделиться текущей доской" hidden>📤 Поделиться</button>
+            <button id="settings-board-btn" title="Настройки доски (права доступа)" hidden>⚙ Настройки</button>
           </div>
         </aside>
         <div id="board-sidebar-backdrop" class="board-sidebar-backdrop"></div>
@@ -211,51 +212,71 @@
     </main>
   </div>
 
-  <!-- Карта #130 Stage 7a: share modal -->
-  <div id="share-modal" class="share-modal" hidden>
-    <div class="share-backdrop" data-share-close></div>
-    <div class="share-content">
-      <div class="share-head">
-        <h2 id="share-title">Поделиться доской</h2>
-        <button type="button" class="share-close-x" data-share-close aria-label="Закрыть">×</button>
+  <!-- BRD-3: Settings modal (пока одна вкладка «Права доступа»). -->
+  <div id="settings-modal" class="settings-modal" hidden>
+    <div class="settings-backdrop" data-settings-close></div>
+    <div class="settings-content">
+      <div class="settings-head">
+        <h2 id="settings-title">Настройки</h2>
+        <button type="button" class="settings-close-x" data-settings-close aria-label="Закрыть">×</button>
       </div>
-      <div class="share-section">
-        <h3>Добавить доступ</h3>
-        <form id="share-form" class="share-form">
-          <select id="share-kind" required>
-            <option value="email">по почте</option>
-            <option value="telegram">по telegram-id</option>
-            <option value="handle">по handle</option>
-          </select>
-          <input id="share-value" type="text" placeholder="user@example.com" required maxlength="255"/>
-          <select id="share-level" required>
-            <option value="300">пишет (write)</option>
-            <option value="200">читает (read)</option>
-          </select>
-          <button type="submit" class="primary">Поделиться</button>
-        </form>
-        <div id="share-form-err" class="share-err" hidden></div>
-      </div>
-      <div class="share-section">
-        <h3>Расшарено с</h3>
-        <div id="share-grants-list" class="share-grants-list">
-          <div class="hint">Загрузка…</div>
-        </div>
-      </div>
-      <div class="share-section" id="share-transfer-section">
-        <h3>Передать владельца</h3>
-        <form id="share-transfer-form" class="share-transfer-form">
-          <select id="share-transfer-target" required>
-            <option value="">— выбери получателя из расшаренных —</option>
-          </select>
-          <button type="submit" class="danger">Передать</button>
-        </form>
-        <div id="share-transfer-hint" class="hint">
-          Доступны только те, кто уже хотя бы раз заходил в доску
-          (привязан UUID). После передачи ты становишься обычным
-          пользователем с правом «write».
-        </div>
-        <div id="share-transfer-err" class="share-err" hidden></div>
+      <nav class="settings-tabs" role="tablist">
+        <button type="button" class="settings-tab active" data-tab="perms" role="tab" aria-selected="true">Права доступа</button>
+      </nav>
+      <div class="settings-panels">
+        <section class="settings-panel active" data-panel="perms">
+          <div class="settings-section">
+            <h3>Кто имеет доступ</h3>
+            <div class="settings-matrix-wrap">
+              <table class="settings-matrix">
+                <thead>
+                  <tr>
+                    <th class="settings-cell-subject">Пользователь</th>
+                    <th class="settings-cell-cap" title="Чтение">R</th>
+                    <th class="settings-cell-cap" title="Запись">W</th>
+                    <th class="settings-cell-cap" title="Приглашение">S</th>
+                    <th class="settings-cell-del"></th>
+                  </tr>
+                </thead>
+                <tbody id="settings-matrix-body">
+                  <tr><td colspan="5" class="hint">Загрузка…</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div id="settings-matrix-err" class="settings-err" hidden></div>
+          </div>
+          <div class="settings-section" id="settings-invite-section">
+            <h3>Пригласить</h3>
+            <form id="settings-invite-form" class="settings-invite-form">
+              <select id="settings-invite-kind" required>
+                <option value="email">по почте</option>
+                <option value="telegram">по telegram-id</option>
+                <option value="handle">по handle</option>
+              </select>
+              <input id="settings-invite-value" type="text" placeholder="user@example.com" required maxlength="255"/>
+              <label class="settings-cap-label" title="Чтение"><input id="settings-invite-r" type="checkbox" checked> R</label>
+              <label class="settings-cap-label" title="Запись"><input id="settings-invite-w" type="checkbox"> W</label>
+              <label class="settings-cap-label" title="Приглашение"><input id="settings-invite-s" type="checkbox"> S</label>
+              <button type="submit" class="primary">Пригласить</button>
+            </form>
+            <div id="settings-invite-hint" class="hint"></div>
+            <div id="settings-invite-err" class="settings-err" hidden></div>
+          </div>
+          <div class="settings-section" id="settings-transfer-section">
+            <h3>Передать владельца</h3>
+            <form id="settings-transfer-form" class="settings-transfer-form">
+              <select id="settings-transfer-target" required>
+                <option value="">— выбери получателя из расшаренных —</option>
+              </select>
+              <button type="submit" class="danger">Передать</button>
+            </form>
+            <div class="hint">
+              Доступны только те, кто уже хотя бы раз заходил в доску (привязан UUID).
+              После передачи ты становишься обычным пользователем с правом «write».
+            </div>
+            <div id="settings-transfer-err" class="settings-err" hidden></div>
+          </div>
+        </section>
       </div>
     </div>
   </div>

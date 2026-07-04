@@ -1122,116 +1122,153 @@ body.board-inspect-collapsed .inspect-toggle { transform: rotate(180deg); }
 }
 
 
-/* ── Share modal (#130 Stage 7a) ─────────────────────────────────────────── */
-.share-modal {
+/* ── Settings modal (BRD-3) ─────────────────────────────────────────────── */
+.settings-modal {
   position: fixed; inset: 0; z-index: 1000;
   display: flex; align-items: center; justify-content: center;
 }
-.share-modal[hidden] { display: none; }
-.share-backdrop {
+.settings-modal[hidden] { display: none; }
+.settings-backdrop {
   position: absolute; inset: 0;
   background: rgba(0,0,0,0.45);
 }
-.share-content {
+.settings-content {
   position: relative; z-index: 1;
   background: var(--surface, #fff); color: var(--text, #222);
   border-radius: 8px; padding: 20px;
-  width: min(720px, 94vw); max-height: 88vh; overflow-y: auto;
+  width: min(820px, 96vw); max-height: 88vh; overflow-y: auto;
   box-shadow: 0 8px 32px rgba(0,0,0,0.3);
 }
-.share-head {
+.settings-head {
   display: flex; justify-content: space-between; align-items: center;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
-.share-head h2 {
+.settings-head h2 {
   margin: 0; font-size: 16px; font-weight: 600;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  max-width: 580px;
+  max-width: 680px;
 }
-.share-close-x {
+.settings-close-x {
   background: transparent; border: 0; font-size: 24px; line-height: 1;
   cursor: pointer; color: var(--text-muted, #888); padding: 0 4px;
 }
-.share-close-x:hover { color: var(--text, #222); }
-.share-section { margin-bottom: 20px; }
-.share-section:last-child { margin-bottom: 0; }
-.share-section h3 {
+.settings-close-x:hover { color: var(--text, #222); }
+
+.settings-tabs {
+  display: flex; gap: 4px; margin-bottom: 16px;
+  border-bottom: 1px solid var(--border, #e5e5e5);
+}
+.settings-tab {
+  background: transparent; border: 0; padding: 8px 14px; cursor: pointer;
+  font: inherit; color: var(--text-muted, #888);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.settings-tab:hover { color: var(--text, #222); }
+.settings-tab.active {
+  color: var(--accent, #2563eb);
+  border-bottom-color: var(--accent, #2563eb);
+}
+
+.settings-panel { display: none; }
+.settings-panel.active { display: block; }
+
+.settings-section { margin-bottom: 20px; }
+.settings-section:last-child { margin-bottom: 0; }
+.settings-section h3 {
   margin: 0 0 8px; font-size: 12px; font-weight: 600;
   text-transform: uppercase; letter-spacing: 0.04em;
   color: var(--text-muted, #888);
 }
-.share-form {
-  display: grid;
-  grid-template-columns: auto 1fr auto auto;
-  gap: 8px; align-items: center;
-}
-.share-form select, .share-form input {
-  padding: 6px 8px; border: 1px solid var(--border, #ccc);
-  border-radius: 4px; font: inherit; background: var(--bg, #fff);
-  color: var(--text, #222);
-}
-.share-form button.primary {
-  padding: 6px 14px; background: var(--accent, #2563eb); color: #fff;
-  border: 0; border-radius: 4px; cursor: pointer; font: inherit;
-}
-.share-form button.primary:hover { filter: brightness(1.05); }
-.share-err {
+.settings-err {
   margin-top: 8px; padding: 6px 10px;
   background: #fee; color: #c00; border-radius: 4px; font-size: 13px;
 }
-.share-grants-list { display: flex; flex-direction: column; gap: 6px; }
-.share-grant-row {
-  display: grid;
-  grid-template-columns: auto 1fr auto auto auto;
-  gap: 10px; align-items: center;
-  padding: 8px 10px; background: var(--bg, #f5f5f5);
-  border-radius: 4px; font-size: 13px;
+
+/* Матрица */
+.settings-matrix-wrap { overflow-x: auto; }
+.settings-matrix {
+  width: 100%; border-collapse: collapse; font-size: 13px;
 }
-.share-grant-kind {
-  font-size: 11px; padding: 2px 6px; border-radius: 3px;
+.settings-matrix thead th {
+  padding: 8px 6px; text-align: left; font-weight: 600;
+  color: var(--text-muted, #888); font-size: 11px;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--border, #e5e5e5);
+}
+.settings-matrix .settings-cell-cap { text-align: center; width: 40px; }
+.settings-matrix .settings-cell-del { width: 30px; }
+.settings-matrix tbody tr { border-bottom: 1px solid var(--border-soft, #f0f0f0); }
+.settings-matrix tbody tr:last-child { border-bottom: none; }
+.settings-matrix tbody td { padding: 8px 6px; vertical-align: middle; }
+.settings-matrix-row-owner { background: var(--bg, #f5f5f5); }
+.settings-cell-subject {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+}
+.settings-kind-badge {
+  font-size: 10px; padding: 2px 6px; border-radius: 3px;
   background: var(--border-soft, #e5e5e5); color: var(--text-muted, #555);
-  text-transform: uppercase; letter-spacing: 0.03em;
+  text-transform: uppercase; letter-spacing: 0.03em; flex-shrink: 0;
 }
-.share-grant-value {
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+.settings-role-badge {
+  font-size: 10px; padding: 2px 6px; border-radius: 3px;
+  background: #d1fadf; color: #0a6a3a;
+  text-transform: uppercase; letter-spacing: 0.03em; flex-shrink: 0;
 }
-.share-grant-status {
-  font-size: 11px; color: var(--text-muted, #888);
+.settings-subject-value {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
 }
-.share-grant-status.bound { color: #0a0; }
-.share-grant-level {
-  font-size: 11px; padding: 2px 6px; border-radius: 3px;
-  background: var(--accent-soft, #dbeafe); color: var(--accent, #2563eb);
+.settings-subject-status {
+  font-size: 10px; color: var(--text-muted, #888); flex-shrink: 0;
 }
-.share-grant-del {
+.settings-subject-status.bound { color: #0a0; }
+.settings-del-btn {
   background: transparent; border: 1px solid var(--border, #ccc);
   border-radius: 4px; padding: 2px 8px; cursor: pointer;
   font-size: 12px; color: var(--text-muted, #888);
 }
-.share-grant-del:hover {
-  background: #fee; color: #c00; border-color: #c00;
-}
+.settings-del-btn:hover { background: #fee; color: #c00; border-color: #c00; }
 
-.share-transfer-form {
+/* Invite form: kind | value | R W S | button */
+.settings-invite-form {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: auto 1fr auto auto auto auto;
   gap: 8px; align-items: center;
 }
-.share-transfer-form select {
+.settings-invite-form select,
+.settings-invite-form input[type="text"] {
   padding: 6px 8px; border: 1px solid var(--border, #ccc);
   border-radius: 4px; font: inherit; background: var(--bg, #fff);
   color: var(--text, #222);
 }
-.share-transfer-form button.danger {
+.settings-cap-label {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 12px; color: var(--text-muted, #666);
+}
+.settings-invite-form button.primary {
+  padding: 6px 14px; background: var(--accent, #2563eb); color: #fff;
+  border: 0; border-radius: 4px; cursor: pointer; font: inherit;
+}
+.settings-invite-form button.primary:hover { filter: brightness(1.05); }
+
+/* Transfer */
+.settings-transfer-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px; align-items: center;
+}
+.settings-transfer-form select {
+  padding: 6px 8px; border: 1px solid var(--border, #ccc);
+  border-radius: 4px; font: inherit; background: var(--bg, #fff);
+  color: var(--text, #222);
+}
+.settings-transfer-form button.danger {
   padding: 6px 14px; background: #c92a2a; color: #fff;
   border: 0; border-radius: 4px; cursor: pointer; font: inherit;
 }
-.share-transfer-form button.danger:hover { background: #a51919; }
-.share-transfer-form button.danger:disabled {
+.settings-transfer-form button.danger:hover { background: #a51919; }
+.settings-transfer-form button.danger:disabled {
   background: #aaa; cursor: not-allowed;
-}
-#share-transfer-hint {
-  margin-top: 6px; font-size: 12px; color: var(--text-muted, #888);
 }
 
 /* Stage 7c: badge + read-only гейт тулбара (#130). */

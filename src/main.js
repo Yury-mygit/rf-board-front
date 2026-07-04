@@ -1,6 +1,25 @@
 import { initBoard, setBoardCursor, loadBoard, clearBoard, applyElementAttrs, deselect as boardDeselect, removeElements as boardRemoveElements, exitEdit as boardExitEdit, getAllSelected as boardGetAllSelected, getSelectedCount as boardGetSelectedCount, addFromApi as boardAddFromApi, upsertFromApi as boardUpsertFromApi, removeFromApi as boardRemoveFromApi, getAllElements as boardGetAllElements, setElementGeo as boardSetElementGeo, setElementParent as boardSetElementParent, getElementById as boardGetElementById, getChildrenOf as boardGetChildrenOf, setSelection as boardSetSelection, zoomIn as boardZoomIn, zoomOut as boardZoomOut, fitView as boardFitView, setViewport as boardSetViewport, worldToScreen as boardWorldToScreen, isEditing as boardIsEditing, getFlowsTouchingAny as boardGetFlowsTouchingAny, placeImage as boardPlaceImage, getCanvasCenterWorld as boardGetCanvasCenterWorld, readImageFile as boardReadImageFile, nudgeSelection as boardNudgeSelection, panViewportByScreen as boardPanViewportByScreen, snapshotGeo as boardSnapshotGeo, recomputeParentIdAfterNudge as boardRecomputeParentIdAfterNudge, recomputeNoteAutoFitHeight as boardRecomputeNoteAutoFitHeight } from './board.js';
 import { assetUrl, mediaUpload } from './media.js';
-import { initShare, openShareModal, setOnTransferred } from './share.js';
+// settings.js подгружается динамически (см. loadSettings ниже) — модуль
+// нужен только при клике на «Настройки»/«Поделиться» и только у юзеров
+// с capability (owner/curator/can_share). Без capability модуль не
+// попадает в bundle → defence in depth (BRD-3 D9).
+let _settingsModule = null;
+async function loadSettings() {
+  if (_settingsModule) return _settingsModule;
+  _settingsModule = await import('./settings.js');
+  _settingsModule.ensureInit();
+  _settingsModule.setOnTransferred(async () => {
+    try {
+      allBoards = await api.boards();
+      renderBoardsList();
+      setStatus('Владелец передан');
+    } catch (e) {
+      setStatus(`Ошибка после transfer: ${e.message}`, true);
+    }
+  });
+  return _settingsModule;
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1586,51 +1605,53 @@ function closeSwipedWrap() {
   }
 }
 
-function _currentBoardRole() {
+// BRD-3: capability-флаги (5 bool) вместо legacy `yourRole` строки.
+function _currentBoard() {
   if (!currentBoardId) return null;
-  const b = allBoards.find(x => x.id === currentBoardId);
-  return b ? (b.yourRole || 'read') : null;
+  return allBoards.find(x => x.id === currentBoardId) || null;
 }
+function _isOwnerOrCurator(b) { return !!(b && (b.isOwner || b.isCurator)); }
+function _canWrite(b)         { return !!(b && (b.isOwner || b.isCurator || b.canWrite)); }
+function _canShare(b)         { return !!(b && (b.isOwner || b.isCurator || b.canShare)); }
+function _isReadOnly(b)       { return !!(b && !_canWrite(b)); }
 
-function _canWrite(role) { return role === 'owner' || role === 'write' || role === 'curator'; }
-function _canManage(role) { return role === 'owner' || role === 'curator'; }
-
-const ROLE_BADGE = {
-  owner:   { label: 'owner',   title: 'Вы владелец',   cls: 'role-owner' },
-  curator: { label: 'curator', title: 'Curator (видит всё)', cls: 'role-curator' },
-  write:   { label: 'write',   title: 'Расшарено, write', cls: 'role-write' },
-  read:    { label: 'read',    title: 'Расшарено, read-only', cls: 'role-read' },
-};
+function _boardBadge(b) {
+  if (!b) return null;
+  if (b.isCurator) return { label: 'curator', title: 'Curator (видит всё)', cls: 'role-curator' };
+  if (b.isOwner)   return { label: 'owner',   title: 'Вы владелец',        cls: 'role-owner' };
+  if (b.canWrite)  return { label: 'write',   title: 'Расшарено, write',   cls: 'role-write' };
+  return { label: 'read', title: 'Расшарено, read-only', cls: 'role-read' };
+}
 
 function renderBoardsList() {
   const list = document.getElementById('board-list');
   list.innerHTML = '';
   openSwipedWrap = null;
-  // BRD-1 close: share-кнопка полностью скрыта для не-manage (не disabled).
-  // Non-manage юзер видит disabled-кнопку и клик без реакции — конфьюзит.
-  // Полный dynamic-import гейт (модуль вне бандла) — BRD-3.
+  // BRD-3: «Поделиться» — гейт по can_share (можно ли приглашать вообще).
+  // «Настройки» — тот же гейт (окно матрицы доступно всем, кто может
+  // хоть кого-то пригласить). Модуль settings.js подтянется dynamic
+  // import'ом при клике — без capability он вне bundle.
+  const currentBoard = _currentBoard();
+  const canShareBoard = _canShare(currentBoard);
   const shareBtn = document.getElementById('share-board-btn');
   if (shareBtn) {
-    const role = _currentBoardRole();
-    const canManage = _canManage(role);
-    shareBtn.hidden = !currentBoardId || !canManage;
-    if (canManage) {
-      shareBtn.disabled = false;
-      shareBtn.title = 'Поделиться текущей доской';
-    }
+    shareBtn.hidden = !currentBoardId || !canShareBoard;
+    if (canShareBoard) shareBtn.title = 'Поделиться текущей доской';
   }
-  // 7c: переключаем body-class по роли — для CSS-гейта тулбара
-  // (read-only прячет элемент-tools).
-  const curRole = _currentBoardRole();
-  document.body.classList.toggle('board-readonly', curRole === 'read');
+  const settingsBtn = document.getElementById('settings-board-btn');
+  if (settingsBtn) {
+    settingsBtn.hidden = !currentBoardId || !canShareBoard;
+    if (canShareBoard) settingsBtn.title = 'Настройки доски (права доступа)';
+  }
+  // Read-only body-class для CSS-гейта тулбара (write отсутствует).
+  document.body.classList.toggle('board-readonly', _isReadOnly(currentBoard) && !!currentBoard);
   if (!allBoards.length) {
     list.innerHTML = '<div class="hint">Нет досок</div>';
     return;
   }
   for (const b of allBoards) {
-    const role = b.yourRole || 'read';
-    const canManage = _canManage(role); // delete + share + transfer
-    const canWrite = _canWrite(role);   // rename + reorder + element CRUD
+    const canManage = _isOwnerOrCurator(b); // delete + transfer
+    const canWrite = _canWrite(b);           // rename + reorder + element CRUD
 
     const wrap = document.createElement('div');
     wrap.className = 'board-item-wrap';
@@ -1677,9 +1698,8 @@ function renderBoardsList() {
 
     const item = document.createElement('div');
     item.className = 'board-item' + (b.id === currentBoardId ? ' active' : '');
-    // 7c: badge с ролью справа от названия (если не owner — чтобы
-    // отличать свои/чужие; owner-badge показываем тоже для ясности).
-    const badge = ROLE_BADGE[role] || ROLE_BADGE.read;
+    // Badge с ролью справа от названия.
+    const badge = _boardBadge(b);
     item.innerHTML =
       `<span class="board-item-title">${escapeHtmlBoard(b.title || 'Без названия')}</span>` +
       `<span class="board-item-role ${badge.cls}" title="${badge.title}">${badge.label}</span>`;
@@ -1930,26 +1950,25 @@ document.addEventListener('mousedown', e => {
 
 document.getElementById('new-board-btn').addEventListener('click', () => { createBoard(); closeSidebar(); });
 
-// Карта #130 Stage 7a + 7b: share modal на текущей доске + transfer ownership.
-initShare();
-setOnTransferred(async () => {
-  // После transfer'а owner поменялся. Перечитываем boards-list (owner_uuid
-  // обновится → 7c hide-controls сработает). Элементы доски не трогаем —
-  // они не поменялись. На следующий PATCH backend сам пересчитает права.
-  try {
-    allBoards = await api.boards();
-    renderBoardsList();
-    setStatus('Владелец передан');
-  } catch (e) {
-    setStatus(`Ошибка после transfer: ${e.message}`, true);
-  }
-});
+// BRD-3: две кнопки — «Поделиться» (focus=invite) и «Настройки»
+// (focus=matrix) открывают одну и ту же settings-модалку. Модуль
+// подтянется dynamic import'ом при первом клике.
 const shareBtn = document.getElementById('share-board-btn');
-shareBtn.addEventListener('click', () => {
-  if (!currentBoardId) return;
-  const board = allBoards.find(b => b.id === currentBoardId);
-  if (board) openShareModal(board);
+shareBtn.addEventListener('click', async () => {
+  const b = _currentBoard();
+  if (!b) return;
+  const mod = await loadSettings();
+  mod.openShareModal(b);
 });
+const settingsBtn = document.getElementById('settings-board-btn');
+if (settingsBtn) {
+  settingsBtn.addEventListener('click', async () => {
+    const b = _currentBoard();
+    if (!b) return;
+    const mod = await loadSettings();
+    mod.openSettings(b);
+  });
+}
 
 function isMobile() { return window.matchMedia('(max-width: 768px)').matches; }
 function closeSidebar() { document.body.classList.remove('board-sidebar-open'); }
