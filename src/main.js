@@ -241,6 +241,8 @@ function buildContextMenu() {
   fillBtn.addEventListener('click', e => { e.stopPropagation(); togglePalette('fill'); });
   strokeBtn.addEventListener('click', e => { e.stopPropagation(); togglePalette('stroke'); });
   colorBtn.addEventListener('click', e => { e.stopPropagation(); togglePalette('color'); });
+  const bgBtn = document.getElementById('ctx-bg-btn');
+  if (bgBtn) bgBtn.addEventListener('click', e => { e.stopPropagation(); togglePalette('bg'); });
 
   const toggleAttr = (prop) => {
     if (!ctxMenuTarget) return;
@@ -398,6 +400,7 @@ function closePalette() {
   document.getElementById('ctx-fill-btn').classList.remove('active');
   document.getElementById('ctx-stroke-btn').classList.remove('active');
   document.getElementById('ctx-color-btn').classList.remove('active');
+  document.getElementById('ctx-bg-btn')?.classList.remove('active');
   document.getElementById('ctx-line-color-btn')?.classList.remove('active');
 }
 
@@ -409,7 +412,9 @@ function togglePalette(prop) {
   document.getElementById('ctx-fill-btn').classList.toggle('active', prop === 'fill');
   document.getElementById('ctx-stroke-btn').classList.toggle('active', prop === 'stroke');
   document.getElementById('ctx-color-btn').classList.toggle('active', prop === 'color');
+  document.getElementById('ctx-bg-btn')?.classList.toggle('active', prop === 'bg');
   document.getElementById('ctx-line-color-btn')?.classList.toggle('active', prop === 'stroke');
+  // Opacity slider — только для fill/stroke/bg; color (text) — не имеет opacity.
   document.getElementById('ctx-opacity-row').style.display = (prop === 'color') ? 'none' : '';
   refreshContextUI();
 }
@@ -417,7 +422,7 @@ function togglePalette(prop) {
 function refreshContextUI() {
   if (!ctxMenuTarget) return;
   const a = ctxMenuTarget.attrs || {};
-  if (ctxMenuTarget.type === 'rect' || ctxMenuTarget.type === 'note') {
+  if (ctxMenuTarget.type === 'rect' || ctxMenuTarget.type === 'oval' || ctxMenuTarget.type === 'note') {
     const isNote = ctxMenuTarget.type === 'note';
     const defaultFill = isNote ? '#fff8c6' : DEFAULT_FILL;
     const defaultStroke = isNote ? '#f1c40f' : DEFAULT_STROKE;
@@ -441,6 +446,9 @@ function refreshContextUI() {
       strokeIcon.classList.remove('no-color');
       strokeIcon.style.borderColor = stroke;
     }
+    // rx (corner radius) не имеет смысла для овала — скрываем label целиком.
+    const rxLabel = document.getElementById('ctx-rx-label');
+    if (rxLabel) rxLabel.style.display = ctxMenuTarget.type === 'oval' ? 'none' : '';
     document.getElementById('ctx-rx').value = a.rx !== undefined ? a.rx : defaultRx;
     document.getElementById('ctx-sw').value = a.strokeWidth !== undefined ? a.strokeWidth : defaultSw;
     if (isNote) {
@@ -479,6 +487,18 @@ function refreshContextUI() {
     const color = a.color !== undefined ? a.color : DEFAULT_COLOR;
     const colorBar = document.querySelector('.ctx-color-bar');
     if (colorBar) colorBar.style.background = color === null ? 'transparent' : color;
+    // Bg swatch на кнопке — отображает текущий attrs.bg (или прозрачный).
+    const bgIcon = document.querySelector('.ctx-tool-text-bg');
+    if (bgIcon) {
+      const bg = a.bg !== undefined ? a.bg : null;
+      if (bg === null) {
+        bgIcon.classList.add('no-color');
+        bgIcon.style.background = '';
+      } else {
+        bgIcon.classList.remove('no-color');
+        bgIcon.style.background = bg;
+      }
+    }
     document.getElementById('ctx-bold-btn').classList.toggle('active', !!a.bold);
     document.getElementById('ctx-italic-btn').classList.toggle('active', !!a.italic);
     document.getElementById('ctx-underline-btn').classList.toggle('active', !!a.underline);
@@ -510,7 +530,7 @@ function showContextMenu(rec, bbox) {
   const tbBpmn = document.getElementById('ctx-toolbar-bpmn');
   const isBpmn = rec && (rec.type === 'bpmn_event' || rec.type === 'bpmn_task'
                          || rec.type === 'bpmn_gateway' || rec.type === 'bpmn_flow');
-  const supported = rec && (rec.type === 'rect' || rec.type === 'text'
+  const supported = rec && (rec.type === 'rect' || rec.type === 'oval' || rec.type === 'text'
                             || rec.type === 'note' || rec.type === 'line' || isBpmn);
   if (!supported) {
     hideContextMenu();
@@ -520,7 +540,7 @@ function showContextMenu(rec, bbox) {
   ctxMenuTarget = rec;
   menu.style.display = '';
   // rect/note используют один toolbar (fill/stroke + rx/sw).
-  tbRect.style.display = (rec.type === 'rect' || rec.type === 'note') ? '' : 'none';
+  tbRect.style.display = (rec.type === 'rect' || rec.type === 'oval' || rec.type === 'note') ? '' : 'none';
   if (tbNote) tbNote.style.display = rec.type === 'note' ? '' : 'none';
   tbText.style.display = rec.type === 'text' ? '' : 'none';
   tbLine.style.display = rec.type === 'line' ? '' : 'none';
@@ -661,7 +681,7 @@ function ipNumRow(label, value, hideIfDefault) {
 function ipRenderStyle(rec) {
   const a = rec.attrs || {};
   let rows = '';
-  if (rec.type === 'rect' || rec.type === 'frame' || rec.type === 'note') {
+  if (rec.type === 'rect' || rec.type === 'oval' || rec.type === 'frame' || rec.type === 'note') {
     rows += ipColorRow('Fill', a.fill);
     rows += ipColorRow('Stroke', a.stroke);
     rows += ipNumRow('rx', a.rx);

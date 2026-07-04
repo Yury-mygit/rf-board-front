@@ -78,8 +78,11 @@ const NOTE_MIN_H = 24;
 const TEXT_MIN_W = 40;     // ~3 символа
 const TEXT_H = 32;
 const TEXT_FONT = '14px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
-const FRAME_TITLE_MIN_W = 40;
-const FRAME_TITLE_FONT = '12px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+const FRAME_TITLE_BASE_SIZE = 14;   // base font-size, «уровень 14»
+const FRAME_TITLE_MIN_SIZE = 10;    // читаемый минимум при shrink'е
+const FRAME_TITLE_MIN_CHARS = 5;    // hide-порог: если 5 M-символов не влезают
+const FRAME_TITLE_COPY_BTN_W = 22;  // ширина кнопки copy + gap
+const FRAME_TITLE_PADDING = 8;      // side padding в fo
 
 let measureCanvas = null;
 function measureWidth(s, font) {
@@ -124,14 +127,71 @@ function resizeTextWidth(rec) {
   }
 }
 
-function resizeFrameTitleWidth(rec) {
+function _frameTitleFont(size) {
+  return `${size}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+}
+
+// Подгоняем название фрейма: font-size уменьшается если полный текст не
+// влезает в ширину фрейма (fo НЕ шире фрейма); скрываем, если фрейм
+// слишком узкий чтобы вместить хотя бы FRAME_TITLE_MIN_CHARS символов
+// «M» при базовом кегле. Название не может быть шире самого фрейма.
+// Название фрейма — zoom-invariant target 14px **на экране** (не в
+// board-координатах). При zoom-out font в board-coords растёт, чтобы
+// отрисованный размер оставался ~14 screen px. Hide-порог и shrink —
+// в screen-space (независимо от zoom).
+function fitFrameTitle(rec) {
   const fo = rec.node.querySelector('foreignObject.board-frame-title-fo');
   const input = rec.node.querySelector('input.board-frame-title');
   if (!fo || !input) return;
+
+  const zoom = viewport.zoom || 1;
+  const frameX = rec.x != null ? rec.x : parseFloat(fo.getAttribute('x') || 0);
+  const frameY = rec.y != null ? rec.y : parseFloat(fo.getAttribute('y') || 0);
+  const frameW = Math.max(0, rec.w || 0);
+  const frameScreenW = frameW * zoom;
   const text = input.value || input.placeholder || '';
-  // запас 32 = ~10 padding + ~18 кнопка copy + ~4 gap
-  const w = Math.max(FRAME_TITLE_MIN_W + 22, Math.ceil(measureWidth(text, FRAME_TITLE_FONT) + 32));
-  fo.setAttribute('width', w);
+  const baseFont = _frameTitleFont(FRAME_TITLE_BASE_SIZE);
+
+  // Hide-порог в screen-space: если 5 «M» + copy-btn + padding не влезают
+  // в ширину фрейма на экране — скрываем.
+  const minCharsW = measureWidth('M'.repeat(FRAME_TITLE_MIN_CHARS), baseFont);
+  const minFrameScreenW = minCharsW + FRAME_TITLE_COPY_BTN_W + FRAME_TITLE_PADDING;
+  if (frameScreenW < minFrameScreenW) {
+    fo.style.display = 'none';
+    return;
+  }
+  fo.style.display = '';
+
+  // Screen font-size: базовый 14, сжимаем если текст не влезает.
+  const availTextScreenW = Math.max(1, frameScreenW - FRAME_TITLE_COPY_BTN_W - FRAME_TITLE_PADDING);
+  const textScreenW = measureWidth(text, baseFont) || 1;
+  let screenFontSize = FRAME_TITLE_BASE_SIZE;
+  if (textScreenW > availTextScreenW) {
+    screenFontSize = Math.max(
+      FRAME_TITLE_MIN_SIZE,
+      Math.floor(FRAME_TITLE_BASE_SIZE * availTextScreenW / textScreenW),
+    );
+  }
+
+  // Board font = screen / zoom (компенсируем camera scale).
+  const boardFontSize = screenFontSize / zoom;
+  input.style.fontSize = `${boardFontSize}px`;
+
+  // FO в board-coords. Ширина ≤ frameW (заголовок не шире фрейма).
+  // Высота такова, чтобы screen-высота была ≈ screenFontSize + 8.
+  const titleScreenH = Math.max(20, screenFontSize + 8);
+  const titleH = titleScreenH / zoom;
+  fo.setAttribute('x', frameX);
+  fo.setAttribute('y', frameY - titleH - 2 / zoom);
+  fo.setAttribute('width', frameW);
+  fo.setAttribute('height', titleH);
+}
+
+// Re-fit всех frame titles — вызывается при zoom-changed из applyViewBox.
+function refitAllFrameTitles() {
+  for (const rec of elements) {
+    if (rec.type === 'frame') fitFrameTitle(rec);
+  }
 }
 
 function uuid() {
@@ -197,6 +257,7 @@ function applyViewBox() {
   svg.setAttribute('viewBox', `${viewport.vx} ${viewport.vy} ${vw} ${vh}`);
   updateGridForViewport(vw, vh);
   refreshHandlesIfVisible();
+  refitAllFrameTitles();
   onViewportChanged({ ...viewport });
 }
 
@@ -504,7 +565,7 @@ function updateHandles(frame) {
 function refreshHandlesIfVisible() {
   if (!handlesG || handlesG.style.display === 'none') return;
   const sel = getOnlySelected();
-  if (sel && (sel.type === 'frame' || sel.type === 'rect' || sel.type === 'image' || sel.type === 'note' || sel.type === 'text' || isBpmnShape(sel.type) || isC4Shape(sel.type))) updateHandles(sel);
+  if (sel && (sel.type === 'frame' || sel.type === 'rect' || sel.type === 'oval' || sel.type === 'image' || sel.type === 'note' || sel.type === 'text' || isBpmnShape(sel.type) || isC4Shape(sel.type))) updateHandles(sel);
 }
 
 export function setBoardCursor(tool) {
@@ -603,7 +664,7 @@ function _patchInPlace(rec, e) {
   _animateNode(rec.node, () => {
     if (dx || dy) _translateNode(rec.node, dx, dy);
     // отдельно width/height для frame/rect/note — могут меняться без move
-    if (rec.type === 'rect' || rec.type === 'frame' || rec.type === 'note') {
+    if (rec.type === 'rect' || rec.type === 'oval' || rec.type === 'frame' || rec.type === 'note') {
       // setRectAttrs принимает абсолютные x/y/w/h — для resize.
       // При только move (dx,dy) — уже сделано translate'ом, w/h не менялись.
       // setRectAttrs мы вызываем ТОЛЬКО если w/h изменились.
@@ -681,7 +742,7 @@ export function addFromApi(e) {
 function renderFromApi(e) {
   const attrs = e.attrs || {};
   const parentId = e.parentId || null;
-  if (e.type === 'rect' || e.type === 'frame') {
+  if (e.type === 'rect' || e.type === 'oval' || e.type === 'frame') {
     const node = createShape(e.type);
     setRectAttrs(node, e.x, e.y, e.w, e.h);
     svg.appendChild(node);
@@ -794,7 +855,7 @@ function findShape(target) {
 }
 
 function canMove(el) {
-  return el.type === 'line' || el.type === 'rect' || el.type === 'frame'
+  return el.type === 'line' || el.type === 'rect' || el.type === 'oval' || el.type === 'frame'
       || el.type === 'text' || el.type === 'note' || el.type === 'image'
       || isBpmnShape(el.type) || isC4Shape(el.type);
 }
@@ -835,7 +896,10 @@ function enterEdit(rec) {
   editing = rec;
   const input = rec.node.querySelector('input, textarea');
   const hit = rec.node.querySelector('.board-edit-hit');
-  if (hit) hit.style.display = 'none';
+  rec.node.classList.add('editing');
+  // hit rect остаётся видимым (SVG-рамка вокруг edit-области, все 4
+  // стороны), но клики пропускает — их ловит input под ним.
+  if (hit) hit.style.pointerEvents = 'none';
   if (input) {
     input.style.pointerEvents = 'auto';
     input.focus();
@@ -848,7 +912,8 @@ export function exitEdit() {
   if (!editing) return;
   const input = editing.node.querySelector('input, textarea');
   const hit = editing.node.querySelector('.board-edit-hit');
-  if (hit) hit.style.display = '';
+  editing.node.classList.remove('editing');
+  if (hit) hit.style.pointerEvents = '';
   if (input) {
     input.style.pointerEvents = '';
     input.blur();
@@ -948,7 +1013,7 @@ function onDown(e) {
   // Handle resize-handle первым: имеет приоритет над shape-кликом.
   const handleEl = e.target.closest('.resize-handle');
   const onlySel = getOnlySelected();
-  if (handleEl && onlySel && (onlySel.type === 'frame' || onlySel.type === 'rect' || onlySel.type === 'image' || onlySel.type === 'note' || onlySel.type === 'text' || isBpmnShape(onlySel.type) || isC4Shape(onlySel.type))) {
+  if (handleEl && onlySel && (onlySel.type === 'frame' || onlySel.type === 'rect' || onlySel.type === 'oval' || onlySel.type === 'image' || onlySel.type === 'note' || onlySel.type === 'text' || isBpmnShape(onlySel.type) || isC4Shape(onlySel.type))) {
     // Card #134: первое таскание handle на label-text → конверсия в
     // wrap-mode. Меняем input → textarea, перепривязываем rec.y от
     // baseline-center к top, attrs.wrap=true. После этого resize идёт
@@ -1244,7 +1309,7 @@ function onMove(e) {
       }
     }
     if (getOnlySelected() === move.el) {
-      if (move.el.type === 'frame' || move.el.type === 'rect' || move.el.type === 'image' || move.el.type === 'note' || move.el.type === 'text' || isBpmnShape(move.el.type) || isC4Shape(move.el.type)) updateHandles(move.el);
+      if (move.el.type === 'frame' || move.el.type === 'rect' || move.el.type === 'oval' || move.el.type === 'image' || move.el.type === 'note' || move.el.type === 'text' || isBpmnShape(move.el.type) || isC4Shape(move.el.type)) updateHandles(move.el);
       onSelectionChanged(move.el, bboxOf(move.el));
     }
   }
@@ -1469,12 +1534,14 @@ function register(rec) {
 export function applyElementAttrs(rec) {
   if (!rec || !rec.node) return;
   const a = rec.attrs || {};
-  if (rec.type === 'rect') {
+  if (rec.type === 'rect' || rec.type === 'oval') {
     if (a.fill !== undefined) rec.node.setAttribute('fill', a.fill === null ? 'none' : a.fill);
     if (a.stroke !== undefined) rec.node.setAttribute('stroke', a.stroke === null ? 'none' : a.stroke);
     if (a.fillOpacity !== undefined) rec.node.setAttribute('fill-opacity', a.fillOpacity);
     if (a.strokeOpacity !== undefined) rec.node.setAttribute('stroke-opacity', a.strokeOpacity);
-    if (a.rx !== undefined) rec.node.setAttribute('rx', a.rx);
+    // rx у rect = corner-radius; у ellipse — radius по X (устанавливается
+    // из w/2 в setRectAttrs). Не пишем rx на ellipse, чтоб не сломать геометрию.
+    if (a.rx !== undefined && rec.type === 'rect') rec.node.setAttribute('rx', a.rx);
     if (a.strokeWidth !== undefined) rec.node.setAttribute('stroke-width', a.strokeWidth);
     return;
   }
@@ -1503,6 +1570,9 @@ export function applyElementAttrs(rec) {
     const desiredText = a.text == null ? '' : a.text;
     if (el.value !== desiredText) el.value = desiredText;
     if (a.color !== undefined) el.style.color = a.color === null ? '' : a.color;
+    // Цвет фона (BRD-4 расширение) — рендерится через backgroundColor
+    // input'а/textarea. null = прозрачно.
+    if (a.bg !== undefined) el.style.backgroundColor = a.bg === null ? '' : a.bg;
     el.style.fontWeight = a.bold ? '700' : '';
     el.style.fontStyle = a.italic ? 'italic' : '';
     el.style.textDecoration = a.underline ? 'underline' : '';
@@ -1530,7 +1600,7 @@ export function applyElementAttrs(rec) {
     if (!input) return;
     const desiredTitle = a.title == null ? '' : a.title;
     if (input.value !== desiredTitle) input.value = desiredTitle;
-    resizeFrameTitleWidth(rec);
+    fitFrameTitle(rec);
     return;
   }
   if (rec.type === 'image') {
@@ -1589,6 +1659,13 @@ function createShape(type) {
     el.setAttribute('rx', '4');
     return el;
   }
+  if (type === 'oval') {
+    const el = document.createElementNS(SVG_NS, 'ellipse');
+    el.setAttribute('fill', '#ffffff');
+    el.setAttribute('stroke', '#212529');
+    el.setAttribute('stroke-width', '2');
+    return el;
+  }
   // frame: <g> с двумя rect — невидимый широкий stroke (hit-area) + видимая тонкая пунктирная линия
   // плюс foreignObject с input для названия (как в Miro, серый label над фреймом).
   const g = document.createElementNS(SVG_NS, 'g');
@@ -1606,7 +1683,7 @@ function createShape(type) {
   const titleFo = document.createElementNS(SVG_NS, 'foreignObject');
   titleFo.classList.add('board-frame-title-fo');
   titleFo.setAttribute('height', '20');
-  titleFo.setAttribute('width', FRAME_TITLE_MIN_W); // обновится в resizeFrameTitleWidth
+  titleFo.setAttribute('width', 1); // обновится в fitFrameTitle
   const titleRow = document.createElement('div');
   titleRow.className = 'board-frame-title-row';
   const titleInput = document.createElement('input');
@@ -1632,14 +1709,46 @@ function attachFrameTitleListener(rec) {
   const copyBtn = rec.node.querySelector('button.board-frame-copy');
   if (!input) return;
   if (rec.attrs?.title) input.value = rec.attrs.title;
-  resizeFrameTitleWidth(rec);
+  fitFrameTitle(rec);
   input.addEventListener('input', () => {
     rec.attrs = rec.attrs || {};
     rec.attrs.title = input.value;
-    resizeFrameTitleWidth(rec);
+    fitFrameTitle(rec);
     onElementChanged(rec);
   });
   attachTextCommit(rec, input, 'title');
+
+  // BRD-4: single click на title = выбор фрейма (как клик на границу) +
+  // старт move-drag (тоже как с границы). Dblclick = edit. Без этого
+  // клик по input сразу давал focus и редактор, минуя selection.
+  input.addEventListener('mousedown', e => {
+    if (input.classList.contains('editing')) return;  // in edit — natural focus/caret
+    e.preventDefault();   // блокируем focus
+    e.stopPropagation();  // и pan/drag хендлер SVG
+    const wasInSelection = selectedIds.has(rec.id);
+    if (!wasInSelection) selectShape(rec);
+    // Инициализируем move-state (эквивалент click'а по границе фрейма).
+    if (canMove(rec)) {
+      const p = screenToWorld(e.clientX, e.clientY);
+      const prepIds = collectMoveTargets(rec, wasInSelection);
+      const before = new Map();
+      for (const id of prepIds) {
+        const el = elements.find(x => x.id === id);
+        if (el) before.set(id, snapshotGeoLocal(el));
+      }
+      move = { el: rec, lastX: p.x, lastY: p.y, startX: p.x, startY: p.y, wasInSelection, before };
+    }
+  });
+  input.addEventListener('dblclick', e => {
+    input.classList.add('editing');
+    input.focus();
+    input.select();
+    e.stopPropagation();
+  });
+  input.addEventListener('blur', () => {
+    input.classList.remove('editing');
+  });
+
   if (copyBtn) {
     copyBtn.addEventListener('click', e => {
       e.preventDefault();
@@ -1660,9 +1769,9 @@ function setRectAttrs(node, x, y, w, h) {
     }
     const fo = node.querySelector('foreignObject.board-frame-title-fo');
     if (fo) {
-      fo.setAttribute('x', x);
-      fo.setAttribute('y', y - 22);
-      // width у title — динамически по содержимому, не привязан к ширине фрейма
+      // Все атрибуты title fo (x/y/width/height/font-size/display) — в
+      // fitFrameTitle. Он же обеспечивает «не шире фрейма» и hide-порог.
+      fitFrameTitle({ node, x, y, w });
     }
     // Note: foreignObject без title-класса — растягиваем под bg с padding 8.
     if (node.dataset && node.dataset.type === 'note') {
@@ -1686,6 +1795,14 @@ function setRectAttrs(node, x, y, w, h) {
         textFo.setAttribute('height', Math.max(0, h));
       }
     }
+    return;
+  }
+  if (node.tagName === 'ellipse') {
+    // Oval: bbox → cx/cy/rx/ry.
+    node.setAttribute('cx', x + w / 2);
+    node.setAttribute('cy', y + h / 2);
+    node.setAttribute('rx', Math.max(0, w / 2));
+    node.setAttribute('ry', Math.max(0, h / 2));
     return;
   }
   node.setAttribute('x', x);
@@ -1736,7 +1853,7 @@ function moveBy(el, dx, dy) {
     recomputeFlows([el.id]);
     return;
   }
-  if (el.type === 'rect' || el.type === 'image') {
+  if (el.type === 'rect' || el.type === 'oval' || el.type === 'image') {
     el.node.setAttribute('x', el.x);
     el.node.setAttribute('y', el.y);
     if (el.type === 'image') syncImagePlaceholder(el);
@@ -1794,7 +1911,7 @@ export function deselect() {
 function notifySelectionChanged() {
   if (selectedIds.size === 1) {
     const only = getOnlySelected();
-    if (only.type === 'frame' || only.type === 'rect' || only.type === 'image' || only.type === 'note' || only.type === 'text' || isBpmnShape(only.type) || isC4Shape(only.type)) showHandlesFor(only);
+    if (only.type === 'frame' || only.type === 'rect' || only.type === 'oval' || only.type === 'image' || only.type === 'note' || only.type === 'text' || isBpmnShape(only.type) || isC4Shape(only.type)) showHandlesFor(only);
     else hideHandles();
     onSelectionChanged(only, bboxOf(only));
   } else {
@@ -1843,7 +1960,7 @@ function applyGeo(rec) {
     rec.node.setAttribute('y2', rec.y2);
     return;
   }
-  if (rec.type === 'rect' || rec.type === 'frame' || rec.type === 'image') {
+  if (rec.type === 'rect' || rec.type === 'oval' || rec.type === 'frame' || rec.type === 'image') {
     setRectAttrs(rec.node, rec.x, rec.y, rec.w, rec.h);
     if (rec.type === 'image') syncImagePlaceholder(rec);
     return;
@@ -1918,7 +2035,7 @@ export function setElementGeo(id, geo) {
   applyGeo(rec);
   if (rec.type === 'text' && !(rec.attrs && rec.attrs.wrap)) resizeTextWidth(rec);
   if (getOnlySelected() === rec) {
-    if (rec.type === 'frame' || rec.type === 'rect' || rec.type === 'image' || rec.type === 'note' || rec.type === 'text' || isBpmnShape(rec.type) || isC4Shape(rec.type)) updateHandles(rec);
+    if (rec.type === 'frame' || rec.type === 'rect' || rec.type === 'oval' || rec.type === 'image' || rec.type === 'note' || rec.type === 'text' || isBpmnShape(rec.type) || isC4Shape(rec.type)) updateHandles(rec);
     onSelectionChanged(rec, bboxOf(rec));
   }
 }
@@ -1953,7 +2070,7 @@ export function nudgeSelection(dx, dy) {
   }
   const only = getOnlySelected();
   if (only && movingIds.has(only.id)) {
-    if (only.type === 'frame' || only.type === 'rect' || only.type === 'image' || only.type === 'note' || isBpmnShape(only.type) || isC4Shape(only.type)) updateHandles(only);
+    if (only.type === 'frame' || only.type === 'rect' || only.type === 'oval' || only.type === 'image' || only.type === 'note' || isBpmnShape(only.type) || isC4Shape(only.type)) updateHandles(only);
     onSelectionChanged(only, bboxOf(only));
   }
   return movingIds;

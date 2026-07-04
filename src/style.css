@@ -323,15 +323,20 @@ body.board-sidebar-open .board-item { background: var(--surface); }
 }
 .board-frame-title {
   width: 100%;
-  height: 20px;
+  height: 100%;
   border: none;
   background: transparent;
   outline: none;
   font: inherit;
-  font-size: 12px;
+  font-size: 14px;  /* базовый; JS overrides при auto-shrink */
   color: var(--muted);
   padding: 0;
   margin: 0;
+  min-width: 0;     /* input в flex-контейнере даёт override */
+  cursor: move;     /* single click = select + drag, как граница фрейма */
+}
+.board-frame-title.editing {
+  cursor: text;     /* dblclick = редактирование */
 }
 .board-frame-title::placeholder { color: var(--muted); opacity: .6; }
 .board-frame-title:focus {
@@ -467,6 +472,22 @@ body.board-sidebar-open .board-item { background: var(--surface); }
   background: #212529;
   border-radius: 1px;
 }
+.ctx-tool-text-bg {
+  display: inline-block;
+  font-weight: 700;
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 3px;
+  background: transparent;      /* JS overrides по attrs.bg */
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.ctx-tool-text-bg.no-color {
+  background:
+    linear-gradient(45deg, transparent 46%, #c92a2a 46%, #c92a2a 54%, transparent 54%),
+    #fff;
+}
 .ctx-tool-bold     { font-weight: 700; font-size: 14px; }
 .ctx-tool-italic   { font-style: italic; font-family: Georgia, serif; font-size: 14px; }
 .ctx-tool-underline{ text-decoration: underline; font-size: 14px; }
@@ -568,7 +589,9 @@ body.board-sidebar-open .board-item { background: var(--surface); }
   cursor: move;
 }
 .board-shape.selected[data-type="text"] .board-edit-hit,
-.board-shape.selected[data-type="note"] .board-edit-hit {
+.board-shape.selected[data-type="note"] .board-edit-hit,
+.board-shape.editing[data-type="text"] .board-edit-hit,
+.board-shape.editing[data-type="note"] .board-edit-hit {
   fill: rgba(13, 110, 253, 0.05);
   stroke: var(--accent);
   stroke-width: 1;
@@ -592,8 +615,9 @@ body.board-sidebar-open .board-item { background: var(--surface); }
   margin: 0;
 }
 .board-text-input:focus {
-  outline: 1px dashed var(--accent);
-  outline-offset: 2px;
+  /* Outline рисует hit-rect (SVG, все 4 стороны). CSS-outline на input'е
+     обрезается FO по бокам, но не сверху/снизу. */
+  outline: none;
   background: rgba(255, 255, 255, 0.6);
 }
 
