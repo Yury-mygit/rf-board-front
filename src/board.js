@@ -1794,7 +1794,7 @@ export function deselect() {
 function notifySelectionChanged() {
   if (selectedIds.size === 1) {
     const only = getOnlySelected();
-    if (only.type === 'frame' || only.type === 'rect' || only.type === 'image' || only.type === 'note' || isBpmnShape(only.type) || isC4Shape(only.type)) showHandlesFor(only);
+    if (only.type === 'frame' || only.type === 'rect' || only.type === 'image' || only.type === 'note' || only.type === 'text' || isBpmnShape(only.type) || isC4Shape(only.type)) showHandlesFor(only);
     else hideHandles();
     onSelectionChanged(only, bboxOf(only));
   } else {
