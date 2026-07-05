@@ -1,7 +1,7 @@
-// settings.js — модалка «Настройки» доски (BRD-3).
+// settings.js — модалка «Настройки» доски (BRD-3, BRD-8).
 //
-// Пока одна вкладка «Права доступа» — матрица r/w/s. Каркас tab'ов
-// заложен под будущие вкладки (dark theme, rename, delete, палитры).
+// Вкладки: «Права доступа» (матрица r/w/s + приглашения + transfer)
+// и «Удаление» (BRD-8, видна только owner|curator).
 //
 // Динамически импортится main.js по клику на «Настройки»/«Поделиться».
 // Модуль не должен грузиться у юзера без capability (owner || curator ||
@@ -15,6 +15,10 @@
 //     {canRead, canWrite, canShare}
 //   DELETE /api/v1/boards/{id}/grants/{kind}/{value}
 //   POST   /api/v1/boards/{id}/transfer {targetUuid}
+//
+// BRD-8: вкладка «Удаление».
+//   DELETE /api/v1/boards/{id}  → 204 (owner|curator, только пустую).
+//     409 board_not_empty при live элементах.
 
 const BASE = '/api/v1';
 
@@ -56,13 +60,19 @@ export const grantsApi = {
     }).then(r => r.json()),
 };
 
+export const boardsApi = {
+  remove: boardId => apiFetch(`/boards/${boardId}`, { method: 'DELETE' }),
+};
+
 const KIND_LABEL = { email: 'EMAIL', telegram: 'TG', handle: 'HANDLE' };
 
 let _current = null; // { board, canManage, canShare }
 let _onTransferred = () => {};
+let _onDeleted = () => {};
 let _wired = false;
 
 export function setOnTransferred(fn) { _onTransferred = fn || (() => {}); }
+export function setOnDeleted(fn) { _onDeleted = fn || (() => {}); }
 function el(id) { return document.getElementById(id); }
 
 function escapeHtml(s) {
@@ -205,6 +215,37 @@ function renderTransferSection(grants) {
   el('settings-transfer-form').querySelector('button.danger').disabled = targets.length === 0;
 }
 
+// ── Delete panel ──────────────────────────────────────────────────
+function deleteConfirmTarget() {
+  const t = (_current.board.title || '').trim();
+  return t || 'удалить';
+}
+
+function renderDeletePanel() {
+  const tabBtn = document.querySelector('.settings-tab[data-tab="delete"]');
+  if (!tabBtn) return;
+  const visible = !!_current.canManage;
+  tabBtn.hidden = !visible;
+  if (!visible) return;
+  const target = deleteConfirmTarget();
+  const label = el('settings-delete-label');
+  const input = el('settings-delete-confirm');
+  const btn = el('settings-delete-btn');
+  label.textContent = _current.board.title
+    ? `Для подтверждения введите название доски: «${target}»`
+    : `Для подтверждения введите слово «${target}»`;
+  input.placeholder = target;
+  input.value = '';
+  btn.disabled = true;
+  setErr('settings-delete-err', '');
+}
+
+function validateDeleteConfirm() {
+  const input = el('settings-delete-confirm');
+  const btn = el('settings-delete-btn');
+  btn.disabled = input.value.trim() !== deleteConfirmTarget();
+}
+
 async function reload() {
   if (!_current) return;
   setErr('settings-matrix-err', '');
@@ -215,6 +256,7 @@ async function reload() {
     renderMatrix(grants);
     renderInviteForm();
     renderTransferSection(grants);
+    renderDeletePanel();
   } catch (e) {
     el('settings-matrix-body').innerHTML =
       `<tr><td colspan="5" class="hint">Не загрузилось: ${escapeHtml(e.message)}</td></tr>`;
@@ -236,6 +278,7 @@ export function openSettings(board, focus = 'matrix') {
   el('settings-invite-kind').value = 'email';
   updateInvitePlaceholder();
   el('settings-modal').hidden = false;
+  activateTab('perms');
   el('settings-matrix-body').innerHTML = '<tr><td colspan="5" class="hint">Загрузка…</td></tr>';
   reload();
   if (focus === 'invite') {
@@ -251,6 +294,19 @@ export function openShareModal(board) {
 function close() {
   el('settings-modal').hidden = true;
   _current = null;
+}
+
+function activateTab(name) {
+  document.querySelectorAll('.settings-tab').forEach(btn => {
+    const on = btn.dataset.tab === name;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  document.querySelectorAll('.settings-panel').forEach(p => {
+    const on = p.dataset.panel === name;
+    p.classList.toggle('active', on);
+    p.hidden = !on;
+  });
 }
 
 function updateInvitePlaceholder() {
@@ -274,6 +330,37 @@ export function ensureInit() {
   });
 
   el('settings-invite-kind').addEventListener('change', updateInvitePlaceholder);
+
+  document.querySelectorAll('.settings-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.hidden) return;
+      activateTab(btn.dataset.tab);
+    });
+  });
+
+  el('settings-delete-confirm').addEventListener('input', validateDeleteConfirm);
+
+  el('settings-delete-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    setErr('settings-delete-err', '');
+    if (!_current || !_current.canManage) return;
+    if (el('settings-delete-confirm').value.trim() !== deleteConfirmTarget()) return;
+    el('settings-delete-btn').disabled = true;
+    const deletedId = _current.board.id;
+    try {
+      await boardsApi.remove(deletedId);
+      close();
+      _onDeleted(deletedId);
+    } catch (err) {
+      const msg = err.status === 409
+        ? 'Сначала удалите все элементы доски.'
+        : err.status === 403
+          ? 'Нет прав на удаление.'
+          : `Не удалось удалить: ${err.message}`;
+      setErr('settings-delete-err', msg);
+      validateDeleteConfirm();
+    }
+  });
 
   el('settings-invite-form').addEventListener('submit', async e => {
     e.preventDefault();

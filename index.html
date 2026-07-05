@@ -228,6 +228,7 @@
       </div>
       <nav class="settings-tabs" role="tablist">
         <button type="button" class="settings-tab active" data-tab="perms" role="tab" aria-selected="true">Права доступа</button>
+        <button type="button" class="settings-tab" data-tab="delete" role="tab" aria-selected="false" hidden>Удаление</button>
       </nav>
       <div class="settings-panels">
         <section class="settings-panel active" data-panel="perms">
@@ -282,6 +283,38 @@
             </div>
             <div id="settings-transfer-err" class="settings-err" hidden></div>
           </div>
+        </section>
+        <section class="settings-panel" data-panel="delete" hidden>
+          <div class="settings-section settings-delete-warn">
+            <h3>Удаление доски</h3>
+            <p class="settings-delete-lead">
+              Доска и её содержимое станут недоступны.
+              Восстановление возможно только через администратора.
+            </p>
+            <p class="settings-delete-lead">
+              Удалить можно только <b>пустую</b> доску —
+              сначала уберите все элементы.
+            </p>
+          </div>
+          <form id="settings-delete-form" class="settings-delete-form">
+            <label for="settings-delete-confirm" id="settings-delete-label">
+              Для подтверждения введите название доски:
+            </label>
+            <input
+              id="settings-delete-confirm"
+              type="text"
+              autocomplete="off"
+              maxlength="255"
+              placeholder=""
+            />
+            <button
+              id="settings-delete-btn"
+              type="submit"
+              class="danger"
+              disabled
+            >Удалить</button>
+          </form>
+          <div id="settings-delete-err" class="settings-err" hidden></div>
         </section>
       </div>
     </div>

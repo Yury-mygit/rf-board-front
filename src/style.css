@@ -1295,6 +1295,34 @@ body.board-inspect-collapsed .inspect-toggle { transform: rotate(180deg); }
   background: #aaa; cursor: not-allowed;
 }
 
+/* BRD-8: вкладка «Удаление». */
+.settings-delete-warn {
+  background: #fff5f5; border: 1px solid #f0c0c0; border-radius: 6px;
+  padding: 12px 14px;
+}
+.settings-delete-warn h3 { color: #a51919; margin-top: 0; }
+.settings-delete-lead { margin: 6px 0; color: #6b1a1a; }
+.settings-delete-form {
+  display: flex; flex-direction: column; gap: 8px; margin-top: 12px;
+}
+.settings-delete-form label {
+  font-size: 13px; color: var(--text-muted, #666);
+}
+.settings-delete-form input[type="text"] {
+  padding: 8px 10px; border: 1px solid var(--border, #ccc);
+  border-radius: 4px; font: inherit; background: var(--bg, #fff);
+  color: var(--text, #222);
+}
+.settings-delete-form button.danger {
+  padding: 8px 16px; background: #c92a2a; color: #fff;
+  border: 0; border-radius: 4px; cursor: pointer; font: inherit;
+  align-self: flex-start;
+}
+.settings-delete-form button.danger:hover { background: #a51919; }
+.settings-delete-form button.danger:disabled {
+  background: #d8b3b3; cursor: not-allowed;
+}
+
 /* Stage 7c: badge + read-only гейт тулбара (#130). */
 .board-item {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;

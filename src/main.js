@@ -18,6 +18,22 @@ async function loadSettings() {
       setStatus(`Ошибка после transfer: ${e.message}`, true);
     }
   });
+  _settingsModule.setOnDeleted(async deletedId => {
+    allBoards = allBoards.filter(b => b.id !== deletedId);
+    if (currentBoardId === deletedId) {
+      currentBoardId = null;
+      clearBoard();
+      clearUndo();
+      if (allBoards.length) {
+        await openBoard(allBoards[0].id);
+      } else {
+        await createBoard('Доска 1');
+      }
+    } else {
+      renderBoardsList();
+    }
+    setStatus('Доска удалена');
+  });
   return _settingsModule;
 }
 
