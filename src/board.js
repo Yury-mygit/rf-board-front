@@ -636,6 +636,37 @@ export function bringNodeToBackInLayer(node) {
   else layerContent.appendChild(node);
 }
 
+// BRD-22: переставить rec.node в правильную позицию внутри layerContent на
+// основании rec.z_index. Точка вставки — перед первым sibling с большим
+// z_index; если таких нет — append в конец. Idempotent: если позиция уже
+// правильная, DOM не трогается (защита от лишних reflow при self-echo SSE).
+function _placeNodeByZIndex(rec) {
+  if (!rec || !rec.node || !layerContent) return;
+  if (rec.node.parentNode !== layerContent) return;
+  const myZ = rec.z_index || 0;
+  const myId = rec.id;
+  let insertBeforeNode = null;
+  let minGreaterZ = Infinity;
+  for (const el of elements) {
+    if (el.id === myId) continue;
+    if (!el.node || el.node.parentNode !== layerContent) continue;
+    const z = el.z_index || 0;
+    if (z > myZ && z < minGreaterZ) {
+      minGreaterZ = z;
+      insertBeforeNode = el.node;
+    }
+  }
+  if (insertBeforeNode) {
+    if (rec.node.nextSibling !== insertBeforeNode) {
+      layerContent.insertBefore(rec.node, insertBeforeNode);
+    }
+  } else {
+    if (layerContent.lastChild !== rec.node) {
+      layerContent.appendChild(rec.node);
+    }
+  }
+}
+
 // Удалить элемент по id из state и DOM (карта #36 live updates).
 export function removeFromApi(id) {
   const idx = elements.findIndex(e => e.id === id);
@@ -656,6 +687,11 @@ export function upsertFromApi(e) {
   const existing = elements.find(el => el.id === e.id);
   if (!existing) {
     renderFromApi(e);
+    // BRD-22: гарантируем правильную DOM-позицию новосозданного узла в
+    // layerContent по его z_index (SSE может доставить create для элемента
+    // с z_index в середине стека, не обязательно самый верхний).
+    const rec = elements.find(el => el.id === e.id);
+    if (rec) _placeNodeByZIndex(rec);
     return;
   }
   _patchInPlace(existing, e);
@@ -665,7 +701,15 @@ function _patchInPlace(rec, e) {
   const attrs = e.attrs || {};
   rec.attrs = attrs;
   rec.parentId = e.parentId || null;
-  if (e.zIndex !== undefined) rec.z_index = e.zIndex;
+  // BRD-22: если z_index изменился — переставить DOM-узел в правильную
+  // позицию внутри layerContent. Ранее только state обновлялся, DOM
+  // оставался в старой позиции (гэп проявлялся у второго клиента при
+  // z-order изменениях от первого).
+  if (e.zIndex !== undefined) {
+    const zChanged = rec.z_index !== e.zIndex;
+    rec.z_index = e.zIndex;
+    if (zChanged) _placeNodeByZIndex(rec);
+  }
   // Cascade: если backend сказал что frame двинулся на (cascade_dx, cascade_dy),
   // фронт translate'ит всех потомков. НО: если frame у нас уже на
   // (e.x, e.y) — значит юзер сам drag'ом двинул и frame, и детей
@@ -788,6 +832,19 @@ export function addFromApi(e) {
 }
 
 function renderFromApi(e) {
+  _renderFromApiInner(e);
+  // BRD-22: устанавливаем rec.z_index сразу после render, чтобы дальнейшие
+  // _placeNodeByZIndex-вызовы и SSE-patch'и работали от корректного oldZ.
+  // Initial loadBoard уже даёт правильный DOM-порядок (backend ORDER BY
+  // z_index ASC + sequential appendChild), но state без этой строки хранит
+  // z_index=undefined до первого patch'а.
+  if (e.zIndex !== undefined) {
+    const rec = elements.find(el => el.id === e.id);
+    if (rec) rec.z_index = e.zIndex;
+  }
+}
+
+function _renderFromApiInner(e) {
   const attrs = e.attrs || {};
   const parentId = e.parentId || null;
   if (e.type === 'rect' || e.type === 'oval' || e.type === 'frame') {
