@@ -240,6 +240,22 @@ body.board-sidebar-open .board-item { background: var(--surface); }
   cursor: pointer;
 }
 .my-boards-btn:hover { background: var(--bg); border-color: var(--muted); }
+
+/* BRD-20: Undo/Redo кнопки в top-bar рядом с «Мои доски». */
+.topbar-btn {
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text);
+  cursor: pointer;
+  margin-left: 4px;
+}
+.topbar-btn:hover:not(:disabled) { background: var(--bg); border-color: var(--muted); }
+.topbar-btn:disabled { opacity: 0.35; cursor: default; }
 /* Полноэкранная страница «Мои доски» (не модалка). Занимает всю
    область под header; кнопка «Мои доски» возвращает на неё. */
 .my-boards-modal {

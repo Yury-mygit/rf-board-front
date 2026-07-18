@@ -79,6 +79,13 @@ const api = {
     apiFetch(`/boards/${boardId}/elements/${elementId}`, { method: 'DELETE' }),
   restoreElement: (boardId, elementId) =>
     apiFetch(`/boards/${boardId}/elements/${elementId}/restore`, { method: 'POST' }).then(r => r.json()),
+  // BRD-20: Undo/Redo — server-side stack γ2 модели (BRD-13).
+  undo: (boardId) =>
+    apiFetch(`/boards/${boardId}/undo`, { method: 'POST' }).then(r => r.json()),
+  redo: (boardId) =>
+    apiFetch(`/boards/${boardId}/redo`, { method: 'POST' }).then(r => r.json()),
+  undoState: (boardId) =>
+    apiFetch(`/boards/${boardId}/undo/state`).then(r => r.json()),
 };
 
 // ── Status ────────────────────────────────────────────────────────────────────
@@ -988,56 +995,65 @@ function ipAttachImageLockAspect() {
 
 // ── Board undo / redo ─────────────────────────────────────────────────────────
 
-const UNDO_LIMIT = 50;
-let undoStack = [];
-let redoStack = [];
+// BRD-20 (γ2 модель, эпик BRD-13): undo/redo — server-authoritative.
+// State приходит из GET /undo/state при loadBoard + из SSE payload'ов
+// в каждом element_* event'е (см. subscribeBoardEvents). Клиент — thin:
+// нажатие кнопки/hotkey'я → POST /undo или /redo → server применяет
+// инверсию + broadcast SSE → фронт обновляет доску через существующий
+// SSE handler.
+let undoState = { canUndo: false, canRedo: false, next_undo_desc: null, next_redo_desc: null };
+let myUuid = null;  // из GET /undo/state — для фильтрации undo_state[myUuid] в SSE.
 
 function clearUndo() {
-  undoStack = [];
-  redoStack = [];
+  undoState = { canUndo: false, canRedo: false, next_undo_desc: null, next_redo_desc: null };
+  applyUndoState(undoState);
 }
 
-function pushUndo(op) {
-  // Любой push отдельной op закрывает активную nudge-серию (см. arrow handler),
-  // чтобы порядок ops в стеке отражал порядок действий. Гард _closingNudge
-  // нужен на самой closeNudgeSession (она внутри тоже зовёт pushUndo).
-  if (!_closingNudge) closeNudgeSession();
-  undoStack.push(op);
-  if (undoStack.length > UNDO_LIMIT) undoStack.shift();
-  redoStack = [];
+function applyUndoState(next) {
+  if (!next) return;
+  undoState = { ...undoState, ...next };
+  const undoBtn = document.getElementById('undo-btn');
+  const redoBtn = document.getElementById('redo-btn');
+  if (undoBtn) {
+    undoBtn.disabled = !undoState.canUndo;
+    undoBtn.title = undoState.canUndo && undoState.next_undo_desc
+      ? `Отменить: ${undoState.next_undo_desc} (Ctrl+Z)`
+      : 'Отменить (Ctrl+Z)';
+  }
+  if (redoBtn) {
+    redoBtn.disabled = !undoState.canRedo;
+    redoBtn.title = undoState.canRedo && undoState.next_redo_desc
+      ? `Вернуть: ${undoState.next_redo_desc} (Ctrl+Y)`
+      : 'Вернуть (Ctrl+Y)';
+  }
 }
 
 async function undoBoard() {
-  const op = undoStack.pop();
-  if (!op) return;
+  if (!currentBoardId || !undoState.canUndo) return;
   try {
-    await applyOp(op, 'inverse');
-    redoStack.push(op);
+    const r = await api.undo(currentBoardId);
+    if (r && r.undo_state) applyUndoState(r.undo_state);
+    // Mutation элементов придёт через SSE — не применяем локально.
   } catch (err) {
     setStatus(`Undo error: ${err.message}`, true);
   }
 }
 
 async function redoBoard() {
-  const op = redoStack.pop();
-  if (!op) return;
+  if (!currentBoardId || !undoState.canRedo) return;
   try {
-    await applyOp(op, 'forward');
-    undoStack.push(op);
+    const r = await api.redo(currentBoardId);
+    if (r && r.undo_state) applyUndoState(r.undo_state);
   } catch (err) {
     setStatus(`Redo error: ${err.message}`, true);
   }
 }
 
-async function applyOp(op, direction) {
-  switch (op.kind) {
-    case 'create': return applyCreate(op, direction);
-    case 'delete': return applyDelete(op, direction);
-    case 'move':   return applyMove(op, direction);
-    case 'resize': return applyResize(op, direction);
-    case 'attrs':  return applyAttrs(op, direction);
-    default:       throw new Error(`Unknown op.kind: ${op.kind}`);
-  }
+// Legacy client-side undo (undoStack/pushUndo/applyOp) удалён в BRD-20.
+// pushUndo стал no-op, чтобы существующие ~10 сайтов не сломались; их
+// можно вычистить в отдельной cleanup-story позже.
+function pushUndo(_op) {
+  if (!_closingNudge) closeNudgeSession();
 }
 
 function snapshotRec(rec) {
@@ -1176,101 +1192,10 @@ async function pasteImageFromClipboard(file) {
   setStatus('Картинка вставлена');
 }
 
-async function eraseElements(ids) {
-  if (!currentBoardId || !ids.length) return;
-  const boardId = currentBoardId;
-  for (const id of ids) {
-    const pending = elementSaveTimers.get(id);
-    if (pending) { clearTimeout(pending); elementSaveTimers.delete(id); }
-  }
-  boardRemoveElements(ids);
-  await Promise.all(ids.map(id => api.deleteElement(boardId, id)));
-}
-
-async function recreateElements(snapshots) {
-  if (!currentBoardId || !snapshots.length) return;
-  const boardId = currentBoardId;
-  await Promise.all(snapshots.map(s => api.restoreElement(boardId, s.id)));
-  for (const s of snapshots) boardAddFromApi(s);
-}
-
-async function applyCreate(op, direction) {
-  if (direction === 'inverse') return eraseElements(op.records.map(r => r.id));
-  return recreateElements(op.records);
-}
-
-async function applyDelete(op, direction) {
-  if (direction === 'inverse') return recreateElements(op.records);
-  return eraseElements(op.records.map(r => r.id));
-}
-
-async function applyMove(op, direction) {
-  if (!currentBoardId) return;
-  const boardId = currentBoardId;
-  const target = direction === 'inverse' ? 'before' : 'after';
-  for (const it of op.items) {
-    const pending = elementSaveTimers.get(it.id);
-    if (pending) { clearTimeout(pending); elementSaveTimers.delete(it.id); }
-  }
-  await Promise.all(op.items.map(async it => {
-    const geo = it[target];
-    boardSetElementGeo(it.id, geo);
-    return api.patchElement(boardId, it.id, {
-      x: geo.x, y: geo.y, w: geo.w, h: geo.h,
-      parentId: geo.parentId || null,
-      updatedAt: Date.now(),
-    });
-  }));
-}
-
-async function applyResize(op, direction) {
-  if (!currentBoardId) return;
-  const boardId = currentBoardId;
-  const target = direction === 'inverse' ? 'before' : 'after';
-  const ids = [op.id, ...op.childParents.map(c => c.id)];
-  for (const id of ids) {
-    const pending = elementSaveTimers.get(id);
-    if (pending) { clearTimeout(pending); elementSaveTimers.delete(id); }
-  }
-  const geo = op[target];
-  boardSetElementGeo(op.id, geo);
-  const promises = [];
-  promises.push(api.patchElement(boardId, op.id, {
-    x: geo.x, y: geo.y, w: geo.w, h: geo.h,
-    parentId: geo.parentId || null,
-    updatedAt: Date.now(),
-  }));
-  for (const c of op.childParents) {
-    const cParent = c[target];
-    boardSetElementParent(c.id, cParent);
-    promises.push(api.patchElement(boardId, c.id, {
-      parentId: cParent || null,
-      updatedAt: Date.now(),
-    }));
-  }
-  await Promise.all(promises);
-}
-
-async function applyAttrs(op, direction) {
-  if (!currentBoardId) return;
-  const boardId = currentBoardId;
-  const target = direction === 'inverse' ? 'before' : 'after';
-  const rec = boardGetElementById(op.id);
-  if (!rec) return;
-  const pending = elementSaveTimers.get(op.id);
-  if (pending) { clearTimeout(pending); elementSaveTimers.delete(op.id); }
-  rec.attrs = rec.attrs || {};
-  for (const [k, v] of Object.entries(op[target])) {
-    if (v === undefined) delete rec.attrs[k];
-    else rec.attrs[k] = v;
-  }
-  applyElementAttrs(rec);
-  renderInspectPanel();
-  await api.patchElement(boardId, op.id, {
-    attrs: { ...rec.attrs },
-    updatedAt: Date.now(),
-  });
-}
+// Legacy applyCreate/applyDelete/applyMove/applyResize/applyAttrs +
+// eraseElements/recreateElements удалены в BRD-20 — undo/redo теперь
+// server-driven (γ2, эпик BRD-13). snapshotRec выше остаётся —
+// используется clipboard copy для paste-flow.
 
 function commitAttrChange(rec, before, after) {
   rec.attrs = rec.attrs || {};
@@ -1641,6 +1566,11 @@ function subscribeBoardEvents(boardId) {
     } else if (t === 'element_deleted') {
       if (payload.element_id) boardRemoveFromApi(payload.element_id);
     }
+    // BRD-20: server отправляет undo_state map — {user_uuid: {canUndo, canRedo, ...}}.
+    // Клиент выбирает свой uuid и обновляет кнопки.
+    if (payload.undo_state && myUuid && payload.undo_state[myUuid]) {
+      applyUndoState(payload.undo_state[myUuid]);
+    }
     // board_patched / board_created / board_deleted — пока не обрабатываем
     // (UI-список досок остаётся ручным).
   };
@@ -1739,6 +1669,15 @@ function initMyBoardsModal() {
   }
 }
 initMyBoardsModal();
+
+// BRD-20: Undo/Redo кнопки в top-bar.
+(function initUndoButtons() {
+  const undoBtn = document.getElementById('undo-btn');
+  const redoBtn = document.getElementById('redo-btn');
+  if (undoBtn) undoBtn.addEventListener('click', undoBoard);
+  if (redoBtn) redoBtn.addEventListener('click', redoBoard);
+  applyUndoState(undoState);  // initial disabled visual
+})();
 
 let openSwipedWrap = null;
 
@@ -2031,7 +1970,14 @@ async function openBoard(id) {
     loadBoard(full.elements || []);
     subscribeBoardEvents(id);
     if (!restoreViewport(id)) boardFitView();
-    clearUndo();
+    // BRD-20: initial fetch server-side undo state + my_uuid для SSE фильтрации.
+    try {
+      const st = await api.undoState(id);
+      if (st && st.my_uuid) myUuid = st.my_uuid;
+      applyUndoState(st);
+    } catch (_) {
+      applyUndoState({ canUndo: false, canRedo: false });
+    }
   } catch (e) {
     setStatus(`Ошибка загрузки доски: ${e.message}`, true);
     clearBoard();

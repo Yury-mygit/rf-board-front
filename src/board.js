@@ -711,6 +711,9 @@ function _patchInPlace(rec, e) {
     }
   });
   applyElementAttrs(rec);
+  // BRD-20: если элемент выделен — handle-рамка следует за ним при SSE-updates
+  // (undo/redo от server'а, drag от других юзеров и т.п.).
+  if (selectedIds.has(rec.id)) refreshHandlesIfVisible();
 }
 
 // Рекурсивно двигает всех потомков frame'а на (dx, dy) — и DOM, и state.
