@@ -51,6 +51,12 @@ let frameTarget = null; // фрейм-цель при drag (для подсве�
 let flowStart = null; // первый shape выбран для создания bpmn_flow
 let c4RelStart = null; // первый shape выбран для создания c4_relationship
 let handlesG = null; // <g> с 8 resize-handles, всегда поверх
+// BRD-16: три семантических слоя в svg. Порядок фиксирован: bg → content → overlay.
+// Хендлы, rubber-band, drag-ghost, frame-target-подсветка живут в layerOverlay
+// постоянно (не переносим в конец на каждом selectShape). Grid в layerBg.
+let layerBg = null;
+let layerContent = null;
+let layerOverlay = null;
 let gridBgRect = null; // фоновый rect под всеми элементами с fill=url(#board-grid)
 let gridPattern = null; // <pattern>, шаг пересчитывается в applyViewBox
 let gridLine = null;    // <path> внутри pattern: две линии (верх и лево ячейки)
@@ -226,13 +232,24 @@ export function initBoard(container, opts = {}) {
   svg.setAttribute('preserveAspectRatio', 'xMinYMin meet');
   container.appendChild(svg);
 
+  // BRD-16: layer groups создаются ПЕРВЫМИ, порядок фиксирует z-order (bg < content < overlay).
+  layerBg = document.createElementNS(SVG_NS, 'g');
+  layerBg.classList.add('layer-bg');
+  svg.appendChild(layerBg);
+  layerContent = document.createElementNS(SVG_NS, 'g');
+  layerContent.classList.add('layer-content');
+  svg.appendChild(layerContent);
+  layerOverlay = document.createElementNS(SVG_NS, 'g');
+  layerOverlay.classList.add('layer-overlay');
+  svg.appendChild(layerOverlay);
+
   installGridBackground();
   ensureBpmnDefs(svg);
   ensureC4Defs(svg);
   ensureBoardArrowDefs(svg);
 
   handlesG = createHandles();
-  svg.appendChild(handlesG);
+  layerOverlay.appendChild(handlesG);
 
   applyViewBox();
   const ro = new ResizeObserver(() => applyViewBox());
@@ -310,7 +327,8 @@ function installGridBackground() {
   gridBgRect = document.createElementNS(SVG_NS, 'rect');
   gridBgRect.classList.add('board-grid-bg');
   gridBgRect.setAttribute('fill', 'url(#board-grid)');
-  svg.appendChild(gridBgRect);
+  // BRD-16: grid — в layerBg, всегда под содержимым доски.
+  layerBg.appendChild(gridBgRect);
 }
 
 function updateGridForViewport(vw, vh) {
@@ -538,7 +556,7 @@ function createHandles() {
 function showHandlesFor(frame) {
   updateHandles(frame);
   handlesG.style.display = '';
-  svg.appendChild(handlesG); // перенести в конец, чтобы быть поверх
+  // BRD-16: handlesG живёт в layerOverlay постоянно, re-append не нужен.
 }
 
 function hideHandles() {
@@ -578,18 +596,16 @@ export function setBoardCursor(tool) {
 }
 
 export function clearBoard() {
-  if (!svg) return;
-  // Удаляем только элементы досок (data-id), не трогаем defs/bg-grid/handles.
-  for (const node of [...svg.querySelectorAll('[data-id]')]) {
+  if (!layerContent) return;
+  // BRD-16: элементы досок живут в layerContent; layerBg (grid) и
+  // layerOverlay (handles/rubber/ghost) не трогаем.
+  for (const node of [...layerContent.querySelectorAll('[data-id]')]) {
     node.remove();
   }
-  for (const ph of [...svg.querySelectorAll('[data-image-placeholder]')]) {
+  for (const ph of [...layerContent.querySelectorAll('[data-image-placeholder]')]) {
     ph.remove();
   }
-  if (handlesG) {
-    hideHandles();
-    svg.appendChild(handlesG);
-  }
+  if (handlesG) hideHandles();
   elements = [];
   selectedIds = new Set();
   drag = null;
@@ -606,6 +622,19 @@ export function loadBoard(apiElements) {
 
 // Snapshot всех текущих элементов (state). Для main.js — z-order min/max.
 export function getAllElements() { return elements; }
+
+// BRD-16: DOM-reorder элемента в пределах layer-content'а.
+// Front → в конец слоя (визуально сверху), Back → в начало (визуально снизу,
+// но всё ещё поверх layer-bg с grid'ом). Используется main.js для z-order UI.
+export function bringNodeToFrontInLayer(node) {
+  if (!node || !layerContent) return;
+  layerContent.appendChild(node);
+}
+export function bringNodeToBackInLayer(node) {
+  if (!node || !layerContent) return;
+  if (layerContent.firstChild) layerContent.insertBefore(node, layerContent.firstChild);
+  else layerContent.appendChild(node);
+}
 
 // Удалить элемент по id из state и DOM (карта #36 live updates).
 export function removeFromApi(id) {
@@ -750,7 +779,7 @@ function renderFromApi(e) {
   if (e.type === 'rect' || e.type === 'oval' || e.type === 'frame') {
     const node = createShape(e.type);
     setRectAttrs(node, e.x, e.y, e.w, e.h);
-    svg.appendChild(node);
+    layerContent.appendChild(node);
     const rec = register({ id: e.id, type: e.type, node, x: e.x, y: e.y, w: e.w, h: e.h, attrs, parentId });
     if (e.type === 'frame') attachFrameTitleListener(rec);
     applyElementAttrs(rec);
@@ -762,7 +791,7 @@ function renderFromApi(e) {
     node.setAttribute('y1', e.y);
     node.setAttribute('x2', e.x + e.w);
     node.setAttribute('y2', e.y + e.h);
-    svg.appendChild(node);
+    layerContent.appendChild(node);
     const rec = register({
       id: e.id, type: 'line', node,
       x1: e.x, y1: e.y, x2: e.x + e.w, y2: e.y + e.h,
@@ -797,7 +826,7 @@ function renderFromApi(e) {
   }
   if (e.type === 'image') {
     const placeholder = createImagePlaceholder(e.x, e.y, e.w, e.h);
-    svg.appendChild(placeholder);
+    layerContent.appendChild(placeholder);
     const node = document.createElementNS(SVG_NS, 'image');
     node.classList.add('board-shape');
     node.dataset.type = 'image';
@@ -809,13 +838,13 @@ function renderFromApi(e) {
     rec._placeholder = placeholder;
     node.addEventListener('load', () => removeImagePlaceholder(rec), { once: true });
     node.addEventListener('error', () => removeImagePlaceholder(rec), { once: true });
-    svg.appendChild(node);
+    layerContent.appendChild(node);
     applyElementAttrs(rec);
     return;
   }
   if (isBpmnShape(e.type)) {
     const node = createBpmnShape(e.type, attrs);
-    svg.appendChild(node);
+    layerContent.appendChild(node);
     const rec = register({ id: e.id, type: e.type, node, x: e.x, y: e.y, w: e.w, h: e.h, attrs, parentId });
     applyBpmnShapeGeo(node, e.type, e.x, e.y, e.w, e.h);
     applyBpmnShapeAttrs(node, e.type, attrs);
@@ -823,7 +852,7 @@ function renderFromApi(e) {
   }
   if (e.type === 'bpmn_flow') {
     const node = createBpmnFlow();
-    svg.appendChild(node);
+    layerContent.appendChild(node);
     const rec = register({ id: e.id, type: 'bpmn_flow', node, x: e.x, y: e.y, w: e.w, h: e.h, attrs, parentId: null });
     // source/target ищем в loaded elements; если не нашли — рисуем по x/y/w/h.
     const s = attrs.sourceId ? elements.find(el => el.id === attrs.sourceId) : null;
@@ -833,7 +862,7 @@ function renderFromApi(e) {
   }
   if (isC4Shape(e.type)) {
     const node = createC4Shape(e.type);
-    svg.appendChild(node);
+    layerContent.appendChild(node);
     const rec = register({ id: e.id, type: e.type, node, x: e.x, y: e.y, w: e.w, h: e.h, attrs, parentId });
     applyC4ShapeGeo(node, e.type, e.x, e.y, e.w, e.h);
     applyC4ShapeAttrs(node, e.type, attrs);
@@ -841,7 +870,7 @@ function renderFromApi(e) {
   }
   if (e.type === 'c4_relationship') {
     const node = createC4Relationship();
-    svg.appendChild(node);
+    layerContent.appendChild(node);
     const rec = register({ id: e.id, type: 'c4_relationship', node, x: e.x, y: e.y, w: e.w, h: e.h, attrs, parentId: null });
     const s = attrs.sourceId ? elements.find(el => el.id === attrs.sourceId) : null;
     const t = attrs.targetId ? elements.find(el => el.id === attrs.targetId) : null;
@@ -1080,7 +1109,7 @@ function onDown(e) {
       }
       // создаём flow
       const node = createBpmnFlow();
-      svg.appendChild(node);
+      layerContent.appendChild(node);
       const rec = register({
         id: uuid(), type: 'bpmn_flow', node,
         x: 0, y: 0, w: 0, h: 0,
@@ -1118,7 +1147,7 @@ function onDown(e) {
         return;
       }
       const node = createC4Relationship();
-      svg.appendChild(node);
+      layerContent.appendChild(node);
       const rec = register({
         id: uuid(), type: 'c4_relationship', node,
         x: 0, y: 0, w: 0, h: 0,
@@ -1251,7 +1280,7 @@ function onMove(e) {
     if (!rubber.node) {
       rubber.node = document.createElementNS(SVG_NS, 'rect');
       rubber.node.classList.add('board-rubber');
-      svg.appendChild(rubber.node);
+      layerOverlay.appendChild(rubber.node);
     }
     const x = Math.min(rubber.startX, p.x);
     const y = Math.min(rubber.startY, p.y);
@@ -1335,7 +1364,9 @@ function onMove(e) {
   if (drag) {
     if (!drag.node) {
       drag.node = createShape(drag.type);
-      svg.appendChild(drag.node);
+      // BRD-16: drag-preview — это будущий content-элемент; кладём сразу
+      // в layerContent, чтобы не было DOM-move при drag-end.
+      layerContent.appendChild(drag.node);
     }
     applyShape(drag.node, drag.type, drag.x1, drag.y1, p.x, p.y);
     // Подсветка фрейма-цели при создании (кроме самого фрейма)
@@ -2304,7 +2335,7 @@ function placeText(x, y, opts = {}) {
 
   g.appendChild(fo);
   g.appendChild(hit);
-  svg.appendChild(g);
+  layerContent.appendChild(g);
 
   const rec = {
     id: opts.id || uuid(),
@@ -2408,7 +2439,7 @@ export function placeImage(x, y, source, w, h) {
 // attrs.src (legacy dataURL или https://). applyElementAttrs выбирает.
 function placeImageAt(x, y, source, w, h) {
   const placeholder = createImagePlaceholder(x, y, w, h);
-  svg.appendChild(placeholder);
+  layerContent.appendChild(placeholder);
   const node = document.createElementNS(SVG_NS, 'image');
   node.setAttribute('x', x);
   node.setAttribute('y', y);
@@ -2433,7 +2464,7 @@ function placeImageAt(x, y, source, w, h) {
   node.addEventListener('load', () => removeImagePlaceholder(rec), { once: true });
   node.addEventListener('error', () => removeImagePlaceholder(rec), { once: true });
   applyElementAttrs(rec);
-  svg.appendChild(node);
+  layerContent.appendChild(node);
   const f = frameContaining(rec);
   if (f) rec.parentId = f.id;
   onElementCreated(rec);
@@ -2585,7 +2616,7 @@ function placeNote(x, y, opts = {}) {
   hit.setAttribute('height', H);
   g.appendChild(hit);
 
-  svg.appendChild(g);
+  layerContent.appendChild(g);
 
   const rec = {
     id: opts.id || uuid(),

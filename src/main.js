@@ -1,4 +1,4 @@
-import { initBoard, setBoardCursor, loadBoard, clearBoard, applyElementAttrs, deselect as boardDeselect, removeElements as boardRemoveElements, exitEdit as boardExitEdit, getAllSelected as boardGetAllSelected, getSelectedCount as boardGetSelectedCount, addFromApi as boardAddFromApi, upsertFromApi as boardUpsertFromApi, removeFromApi as boardRemoveFromApi, getAllElements as boardGetAllElements, setElementGeo as boardSetElementGeo, setElementParent as boardSetElementParent, getElementById as boardGetElementById, getChildrenOf as boardGetChildrenOf, setSelection as boardSetSelection, zoomIn as boardZoomIn, zoomOut as boardZoomOut, fitView as boardFitView, setViewport as boardSetViewport, worldToScreen as boardWorldToScreen, isEditing as boardIsEditing, getFlowsTouchingAny as boardGetFlowsTouchingAny, placeImage as boardPlaceImage, getCanvasCenterWorld as boardGetCanvasCenterWorld, readImageFile as boardReadImageFile, nudgeSelection as boardNudgeSelection, panViewportByScreen as boardPanViewportByScreen, snapshotGeo as boardSnapshotGeo, recomputeParentIdAfterNudge as boardRecomputeParentIdAfterNudge, recomputeNoteAutoFitHeight as boardRecomputeNoteAutoFitHeight } from './board.js';
+import { initBoard, setBoardCursor, loadBoard, clearBoard, applyElementAttrs, deselect as boardDeselect, removeElements as boardRemoveElements, exitEdit as boardExitEdit, getAllSelected as boardGetAllSelected, getSelectedCount as boardGetSelectedCount, addFromApi as boardAddFromApi, upsertFromApi as boardUpsertFromApi, removeFromApi as boardRemoveFromApi, getAllElements as boardGetAllElements, setElementGeo as boardSetElementGeo, setElementParent as boardSetElementParent, getElementById as boardGetElementById, getChildrenOf as boardGetChildrenOf, setSelection as boardSetSelection, zoomIn as boardZoomIn, zoomOut as boardZoomOut, fitView as boardFitView, setViewport as boardSetViewport, worldToScreen as boardWorldToScreen, isEditing as boardIsEditing, getFlowsTouchingAny as boardGetFlowsTouchingAny, placeImage as boardPlaceImage, getCanvasCenterWorld as boardGetCanvasCenterWorld, readImageFile as boardReadImageFile, nudgeSelection as boardNudgeSelection, panViewportByScreen as boardPanViewportByScreen, snapshotGeo as boardSnapshotGeo, recomputeParentIdAfterNudge as boardRecomputeParentIdAfterNudge, recomputeNoteAutoFitHeight as boardRecomputeNoteAutoFitHeight, bringNodeToFrontInLayer as boardBringNodeToFront, bringNodeToBackInLayer as boardBringNodeToBack } from './board.js';
 import { assetUrl, mediaUpload } from './media.js';
 // settings.js подгружается динамически (см. loadSettings ниже) — модуль
 // нужен только при клике на «Настройки»/«Поделиться» и только у юзеров
@@ -1575,11 +1575,10 @@ async function zOrderChange(rec, where) {
     newZ = Math.min(...all.map(e => e.z_index || 0)) - 1;
   }
   rec.z_index = newZ;
-  // Локальный DOM-reorder: в SVG порядок = z-order.
-  const svg = document.querySelector('.board-svg');
-  if (rec.node && svg) {
-    if (where === 'front') svg.appendChild(rec.node);
-    else svg.insertBefore(rec.node, svg.firstChild);
+  // BRD-16: DOM-reorder в пределах layer-content (не svg-root), чтобы grid и overlay не смещались.
+  if (rec.node) {
+    if (where === 'front') boardBringNodeToFront(rec.node);
+    else boardBringNodeToBack(rec.node);
   }
   try {
     await api.patchElement(boardId, rec.id, {
