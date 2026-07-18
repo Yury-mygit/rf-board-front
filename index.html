@@ -9,9 +9,28 @@
 <body>
   <div id="app">
     <header>
-      <span class="logo">Доска</span>
+      <button id="my-boards-btn" class="my-boards-btn" title="Мои доски">📋 Мои доски</button>
       <span id="status"></span>
     </header>
+    <!-- Титульная модалка «Мои доски» (аналог экрана Мои команды в task-трекере). -->
+    <div id="my-boards-modal" class="my-boards-modal" hidden>
+      <div class="mb-backdrop"></div>
+      <div class="mb-card">
+        <div class="mb-head">
+          <h2>Мои доски</h2>
+          <button id="mb-close" class="mb-close" aria-label="Закрыть">×</button>
+        </div>
+        <div id="mb-list" class="mb-list"></div>
+        <div class="mb-new-wrap">
+          <button id="mb-new-btn" class="mb-new-btn" type="button">+ Новая доска</button>
+          <form id="mb-new-form" class="mb-new-form" hidden>
+            <input id="mb-new-title" type="text" placeholder="Название доски" required maxlength="100"/>
+            <button type="submit" class="btn-primary">Создать</button>
+            <button type="button" id="mb-new-cancel" class="btn-secondary">Отмена</button>
+          </form>
+        </div>
+      </div>
+    </div>
     <main>
       <section id="board">
         <aside class="board-sidebar">
@@ -194,6 +213,10 @@
               </button>
               <button id="ctx-to-back-btn" class="ctx-tool" title="На задний план">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="12" height="12" rx="1"/><path d="M20 8v11a1 1 0 0 1-1 1H8"/></svg>
+              </button>
+              <span class="ctx-sep"></span>
+              <button id="ctx-lock-btn" class="ctx-tool" title="Зафиксировать (Ctrl+L)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
               </button>
             </div>
             <div id="ctx-palette" class="ctx-palette" style="display:none">

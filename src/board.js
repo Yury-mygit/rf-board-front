@@ -41,6 +41,11 @@ let move = null;     // перемещение существующего
 let resize = null;   // resize фрейма за handle
 let rubber = null;   // rubber-band selection (drag по пустому месту)
 let selectedIds = new Set(); // id'ы выбранных элементов
+// BRD-7: long-press на shape → override select/drag, старт rubber.
+let longPressTimer = null;
+let longPressAnchor = null; // { p, e-info для startRubber }
+const LONG_PRESS_MS = 1000;
+const LONG_PRESS_MOVE_PX = 4;
 let editing = null;  // text/note в режиме редактирования (input доступен)
 let frameTarget = null; // фрейм-цель при drag (для подсветки)
 let flowStart = null; // первый shape выбран для создания bpmn_flow
@@ -855,9 +860,16 @@ function findShape(target) {
 }
 
 function canMove(el) {
+  // BRD-5: заблокированный элемент не двигается drag'ом.
+  if (el.attrs && el.attrs.locked) return false;
   return el.type === 'line' || el.type === 'rect' || el.type === 'oval' || el.type === 'frame'
       || el.type === 'text' || el.type === 'note' || el.type === 'image'
       || isBpmnShape(el.type) || isC4Shape(el.type);
+}
+
+// BRD-5: single-place check «этот элемент заблокирован».
+export function isLocked(el) {
+  return !!(el && el.attrs && el.attrs.locked);
 }
 
 // Все edges (bpmn_flow + c4_relationship), у которых source или target —
@@ -1154,6 +1166,11 @@ function onDown(e) {
       }
       move = { el: shape, lastX: p.x, lastY: p.y, startX: p.x, startY: p.y, wasInSelection, before };
     }
+    // BRD-7: mouse-only long-press таймер (touch/pen — не активируем).
+    // Если удерживать >1s без движения → override select/move-prep, стартуем rubber.
+    if (e.pointerType == null || e.pointerType === 'mouse') {
+      startLongPressTimer(p, e);
+    }
     e.preventDefault();
   } else {
     // Пустое место без инструмента → старт rubber-band.
@@ -1164,8 +1181,54 @@ function onDown(e) {
       node: null,
       initialSelection: e.shiftKey ? new Set(selectedIds) : null,
     };
+    // BRD-7: long-press на пустоте тоже меняет курсор через 1s
+    // (визуальный feedback, что можно рисовать rubber). Обычный short-drag
+    // остаётся без курсорного изменения.
+    if (e.pointerType == null || e.pointerType === 'mouse') {
+      startLongPressTimer(p, e);
+    }
     e.preventDefault();
   }
+}
+
+// BRD-7: старт таймера long-press на shape'у.
+function startLongPressTimer(p, e) {
+  cancelLongPressTimer();
+  longPressAnchor = { x: p.x, y: p.y, shift: !!e.shiftKey, clientX: e.clientX, clientY: e.clientY };
+  longPressTimer = window.setTimeout(triggerLongPress, LONG_PRESS_MS);
+}
+
+function cancelLongPressTimer() {
+  if (longPressTimer !== null) {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+  }
+  longPressAnchor = null;
+}
+
+function triggerLongPress() {
+  longPressTimer = null;
+  if (!longPressAnchor) return;
+  document.body.classList.add('board-rubber-mode');
+  // Если rubber уже стартовал (клик по пустоте) — только курсор меняем,
+  // сам rubber не пересоздаём. Помечаем fromLongPress чтобы mouseup без
+  // drag'а не сбрасывал существующий selection.
+  if (rubber) {
+    rubber.fromLongPress = true;
+  } else {
+    // Long-press на shape'у: отменяем move-prep, стартуем rubber с точки нажатия.
+    move = null;
+    frameTarget && setFrameTarget(null);
+    rubber = {
+      startX: longPressAnchor.x,
+      startY: longPressAnchor.y,
+      shift: longPressAnchor.shift,
+      node: null,
+      initialSelection: longPressAnchor.shift ? new Set(selectedIds) : new Set(selectedIds),
+      fromLongPress: true,
+    };
+  }
+  longPressAnchor = null;
 }
 
 function onMove(e) {
@@ -1174,6 +1237,14 @@ function onMove(e) {
     viewport.vy = pan.startVy - (e.clientY - pan.startClientY) / viewport.zoom;
     applyViewBox();
     return;
+  }
+  // BRD-7: движение >LONG_PRESS_MOVE_PX от anchor'а — отменяем таймер.
+  if (longPressAnchor && longPressTimer !== null) {
+    const dx = e.clientX - longPressAnchor.clientX;
+    const dy = e.clientY - longPressAnchor.clientY;
+    if (dx * dx + dy * dy > LONG_PRESS_MOVE_PX * LONG_PRESS_MOVE_PX) {
+      cancelLongPressTimer();
+    }
   }
   const p = point(e);
   if (rubber) {
@@ -1316,6 +1387,9 @@ function onMove(e) {
 }
 
 function onUp(e) {
+  // BRD-7: любой mouseup гарантированно снимает long-press timer и cursor-mode.
+  cancelLongPressTimer();
+  document.body.classList.remove('board-rubber-mode');
   if (pan) {
     pan = null;
     refreshCursor();
@@ -1328,6 +1402,8 @@ function onUp(e) {
     const small = dx < 3 && dy < 3;
     if (rubber.node) rubber.node.remove();
     if (small) {
+      // BRD-7: long-press без drag'а не должен deselect'ить — просто выходим.
+      if (rubber.fromLongPress) { rubber = null; return; }
       // Click мимо без drag → без shift deselect, с shift не трогаем.
       if (!rubber.shift) deselect();
       rubber = null;
@@ -1465,7 +1541,6 @@ function onUp(e) {
     const beforeMap = move.before;
     const p = point(e);
     const moved = Math.abs(p.x - move.startX) >= 3 || Math.abs(p.y - move.startY) >= 3;
-    const wasGroupDrag = selectedIds.has(el.id) && selectedIds.size > 1;
     move = null;
     // Click без shift на элемент из multi-selection без реального drag → свернуть к одному.
     if (!moved && wasInSelection && selectedIds.size > 1) {
@@ -1473,20 +1548,23 @@ function onUp(e) {
       setFrameTarget(null);
       return;
     }
-    // Containment пересчитывается только для одиночного drag.
-    if (!wasGroupDrag && el.type !== 'frame') {
-      const newParent = frameContaining(el);
-      const newParentId = newParent ? newParent.id : null;
-      if (newParentId !== el.parentId) {
-        el.parentId = newParentId;
-        // Immediate flush: backend cascade-move на drag frame'а идёт по
-        // DB.parent_id. Если PATCH parent_id остаётся в debounce, ребёнок
-        // визуально «вытащен», но в БД ещё child — следующий drag frame'а
-        // двинет его. Принудительный flush гарантирует синхрон.
-        if (typeof window.__flushElementSave === 'function') {
-          window.__flushElementSave(el);
-        } else {
-          onElementChanged(el);
+    // BRD-11: containment пересчитывается per-element для каждого не-frame'а
+    // в drag-selection. Backend cascade-move идёт по DB.parent_id — если
+    // PATCH parent_id остаётся в debounce, ребёнок визуально «вытащен», но
+    // в БД ещё child. Принудительный flush гарантирует синхрон.
+    if (moved && beforeMap) {
+      for (const id of beforeMap.keys()) {
+        const elx = elements.find(e => e.id === id);
+        if (!elx || elx.type === 'frame') continue;
+        const newParent = frameContaining(elx);
+        const newParentId = newParent ? newParent.id : null;
+        if (newParentId !== elx.parentId) {
+          elx.parentId = newParentId;
+          if (typeof window.__flushElementSave === 'function') {
+            window.__flushElementSave(elx);
+          } else {
+            onElementChanged(elx);
+          }
         }
       }
     }
@@ -1534,6 +1612,9 @@ function register(rec) {
 export function applyElementAttrs(rec) {
   if (!rec || !rec.node) return;
   const a = rec.attrs || {};
+  // BRD-5: toggle `.locked` CSS-класс на shape'у по attrs.locked.
+  if (a.locked) rec.node.classList.add('locked');
+  else rec.node.classList.remove('locked');
   if (rec.type === 'rect' || rec.type === 'oval') {
     if (a.fill !== undefined) rec.node.setAttribute('fill', a.fill === null ? 'none' : a.fill);
     if (a.stroke !== undefined) rec.node.setAttribute('stroke', a.stroke === null ? 'none' : a.stroke);
@@ -1675,7 +1756,7 @@ function createShape(type) {
   hit.setAttribute('stroke-width', '14');
   hit.setAttribute('pointer-events', 'stroke');
   const visible = document.createElementNS(SVG_NS, 'rect');
-  visible.setAttribute('fill', 'none');
+  visible.classList.add('board-frame-visible');
   visible.setAttribute('stroke', '#868e96');
   visible.setAttribute('stroke-width', '1.5');
   visible.setAttribute('stroke-dasharray', '6 4');
@@ -1853,10 +1934,20 @@ function moveBy(el, dx, dy) {
     recomputeFlows([el.id]);
     return;
   }
-  if (el.type === 'rect' || el.type === 'oval' || el.type === 'image') {
+  if (el.type === 'rect' || el.type === 'image') {
     el.node.setAttribute('x', el.x);
     el.node.setAttribute('y', el.y);
     if (el.type === 'image') syncImagePlaceholder(el);
+    return;
+  }
+  if (el.type === 'oval') {
+    // SVG <ellipse> позиционируется через cx/cy/rx/ry, а не x/y.
+    // Раньше moveBy ставил x/y — ellipse их игнорировал, поэтому во время
+    // drag двигался только selection-контур (bboxOf честно возвращал новый
+    // rec.x/y), а сам овал прыгал в конечное положение только после
+    // mouseup, когда что-то перерисовывало атрибуты. setRectAttrs
+    // конвертирует bbox → cx/cy/rx/ry.
+    setRectAttrs(el.node, el.x, el.y, el.w, el.h);
     return;
   }
   if (el.type === 'frame') {
@@ -1866,7 +1957,12 @@ function moveBy(el, dx, dy) {
   if (el.type === 'text') {
     const fo = el.node.querySelector('foreignObject');
     const hit = el.node.querySelector('.board-edit-hit');
-    const off = el.h / 2;
+    // Card #134: label-mode держит rec.y как baseline-center (fo.y = y - h/2),
+    // wrap-mode (textarea) — rec.y = top (fo.y = y). moveBy сдвигал fo всегда
+    // на -h/2, что уводило wrap-текст вверх на половину высоты относительно
+    // bboxOf-контура. Fix: смотрим attrs.wrap.
+    const isWrap = !!(el.attrs && el.attrs.wrap);
+    const off = isWrap ? 0 : el.h / 2;
     if (fo) { fo.setAttribute('x', el.x); fo.setAttribute('y', el.y - off); }
     if (hit) { hit.setAttribute('x', el.x); hit.setAttribute('y', el.y - off); }
     return;
@@ -1911,7 +2007,11 @@ export function deselect() {
 function notifySelectionChanged() {
   if (selectedIds.size === 1) {
     const only = getOnlySelected();
-    if (only.type === 'frame' || only.type === 'rect' || only.type === 'oval' || only.type === 'image' || only.type === 'note' || only.type === 'text' || isBpmnShape(only.type) || isC4Shape(only.type)) showHandlesFor(only);
+    // BRD-5: locked элемент — handles не показываем (resize запрещён).
+    const eligible = only.type === 'frame' || only.type === 'rect' || only.type === 'oval'
+      || only.type === 'image' || only.type === 'note' || only.type === 'text'
+      || isBpmnShape(only.type) || isC4Shape(only.type);
+    if (eligible && !isLocked(only)) showHandlesFor(only);
     else hideHandles();
     onSelectionChanged(only, bboxOf(only));
   } else {
@@ -2231,7 +2331,10 @@ function placeText(x, y, opts = {}) {
     onElementChanged(rec);
   });
   attachTextCommit(rec, inputEl, 'text');
-  g.addEventListener('dblclick', e => { enterEdit(rec); e.stopPropagation(); });
+  g.addEventListener('dblclick', e => {
+    if (isLocked(rec)) { e.stopPropagation(); return; } // BRD-5
+    enterEdit(rec); e.stopPropagation();
+  });
 
   if (!opts.id) {
     const f = frameContaining(rec);
@@ -2501,7 +2604,10 @@ function placeNote(x, y, opts = {}) {
     onElementChanged(rec);
   });
   attachTextCommit(rec, ta, 'text');
-  g.addEventListener('dblclick', e => { enterEdit(rec); e.stopPropagation(); });
+  g.addEventListener('dblclick', e => {
+    if (isLocked(rec)) { e.stopPropagation(); return; } // BRD-5
+    enterEdit(rec); e.stopPropagation();
+  });
 
   if (!opts.id) {
     const f = frameContaining(rec);

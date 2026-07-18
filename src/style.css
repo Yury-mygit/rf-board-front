@@ -107,7 +107,6 @@ body.board-on #board { display: flex; }
   overflow: hidden;
   transition: background-color .18s ease, border-color .18s ease;
 }
-.board-sidebar:hover,
 body.board-sidebar-open .board-sidebar {
   background: var(--surface);
   border-right-color: var(--border);
@@ -122,7 +121,6 @@ body.board-sidebar-open .board-sidebar {
   z-index: 1;
   transition: background-color .18s ease, border-color .18s ease;
 }
-.board-sidebar:hover .board-sidebar-toolbar,
 body.board-sidebar-open .board-sidebar-toolbar {
   background: var(--surface);
   border-top-color: var(--border);
@@ -168,6 +166,10 @@ body.board-sidebar-open .board-sidebar-toolbar {
   font-size: 13px;
 }
 .board-item-delete:hover { background: #a51919; }
+
+/* BRD-7: во время long-press rubber-mode курсор — crosshair над всей канвой. */
+body.board-rubber-mode,
+body.board-rubber-mode * { cursor: crosshair !important; }
 .board-item {
   position: relative;
   padding: 8px 12px;
@@ -180,7 +182,6 @@ body.board-sidebar-open .board-sidebar-toolbar {
   transition: transform 0.18s ease, background-color .18s ease;
   user-select: none;
 }
-.board-sidebar:hover .board-item,
 body.board-sidebar-open .board-item { background: var(--surface); }
 .board-item:hover { background: var(--bg); }
 .board-item.active {
@@ -226,6 +227,155 @@ body.board-sidebar-open .board-item { background: var(--surface); }
 
 .board-shape {
   cursor: move;
+}
+/* ── Титульная модалка «Мои доски» ── */
+.my-boards-btn {
+  padding: 6px 12px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+.my-boards-btn:hover { background: var(--bg); border-color: var(--muted); }
+/* Полноэкранная страница «Мои доски» (не модалка). Занимает всю
+   область под header; кнопка «Мои доски» возвращает на неё. */
+.my-boards-modal {
+  flex: 1;
+  min-height: 0;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.my-boards-modal[hidden] { display: none; }
+.mb-backdrop { display: none; }
+/* При открытом welcome-экране скрываем канву. */
+body.mb-open main { display: none; }
+.mb-card {
+  width: 100%;
+  height: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 40px 24px 32px;
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.mb-head {
+  display: flex;
+  align-items: center;
+  padding: 0 4px 20px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+.mb-head h2 { margin: 0; flex: 1; font-size: 28px; font-weight: 700; letter-spacing: -.02em; }
+.mb-close { display: none; }
+.mb-list {
+  padding: 4px 0;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 60px;
+}
+.mb-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  cursor: pointer;
+  margin-bottom: 8px;
+}
+.mb-item:hover { border-color: var(--accent); }
+.mb-item .mb-title { flex: 1; font-size: 15px; font-weight: 500; }
+.mb-item .mb-badge {
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.mb-item .mb-badge.role-owner { background: rgba(255,106,61,0.15); color: var(--accent); }
+.mb-item .mb-badge.role-curator { background: rgba(200,60,220,0.15); color: #c33cdc; }
+.mb-empty {
+  color: var(--muted);
+  text-align: center;
+  padding: 24px 0;
+}
+.mb-new-wrap {
+  padding: 20px 4px 8px;
+  border-top: 1px solid var(--border);
+  margin-top: 16px;
+  background: transparent;
+}
+.mb-new-btn {
+  padding: 8px 16px;
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+}
+.mb-new-btn:hover { filter: brightness(1.05); }
+.mb-new-form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.mb-new-form input {
+  flex: 1;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+}
+.mb-new-form input:focus { outline: none; border-color: var(--accent); }
+.mb-new-form .btn-primary {
+  padding: 8px 16px;
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+}
+.mb-new-form .btn-secondary {
+  padding: 8px 12px;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+}
+
+/* BRD-5: locked элемент — визуально приглушён, курсор запрета. */
+.board-shape.locked { cursor: not-allowed !important; }
+.board-shape.locked > rect,
+.board-shape.locked > ellipse,
+.board-shape.locked > image,
+.board-shape.locked > line,
+.board-shape.locked > path,
+.board-shape.locked > polygon { stroke-dasharray: 4 3; }
+/* Активная (нажатая) кнопка Lock в ctx-toolbar. */
+.ctx-tool.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
 }
 /* Live-update плавность (карта #36 / fix cascade-move).
    Применяется только на 320ms через JS-класс на узлах, изменённых
@@ -316,6 +466,12 @@ body.board-sidebar-open .board-item { background: var(--surface); }
   stroke-width: 1;
   stroke-dasharray: 4 2;
   pointer-events: none;
+}
+
+/* Visible-rect frame'а: непрозрачный fill цветом канвы, чтобы grid
+   (board-grid-bg) не просвечивал внутри контура. BRD-10 (2026-07-14). */
+.board-frame-visible {
+  fill: var(--bg);
 }
 
 .board-frame-title-fo {
@@ -673,11 +829,8 @@ body.board-sidebar-open .board-item { background: var(--surface); }
   z-index: 5; /* выше .board-sidebar (4), чтобы раскрытый sidebar не перекрывал палитру */
   transition: left .18s ease;
 }
-/* При раскрытой левой шторке (hover на desktop / open на mobile) палитра
-   едет вправо, чтобы не оставаться под выехавшим списком досок. */
-@media (min-width: 769px) {
-  .board-sidebar:hover ~ .board-content .board-tools { left: 252px; }
-}
+/* При раскрытой левой шторке палитра едет вправо, чтобы не оставаться
+   под выехавшим списком досок. */
 body.board-sidebar-open .board-content .board-tools { left: 252px; }
 .board-tool {
   width: 32px;
@@ -707,7 +860,7 @@ body.board-sidebar-open .board-content .board-tools { left: 252px; }
   left: 8px;
   width: 36px;
   height: 36px;
-  display: none;
+  display: flex;
   align-items: center;
   justify-content: center;
   background: var(--surface);
@@ -716,8 +869,11 @@ body.board-sidebar-open .board-content .board-tools { left: 252px; }
   box-shadow: 0 1px 4px rgba(0,0,0,.08);
   color: var(--text);
   cursor: pointer;
-  z-index: 3;
+  z-index: 8;
 }
+/* Sidebar открыт → бургер скрыт; закрыть можно кликом по backdrop
+   (вне панели), который уже привязан к closeSidebar в main.js. */
+body.board-sidebar-open .board-sidebar-toggle { display: none; }
 .board-sidebar-toggle svg { display: block; width: 20px; height: 20px; }
 .board-sidebar-backdrop {
   display: none;
@@ -729,64 +885,27 @@ body.board-sidebar-open .board-content .board-tools { left: 252px; }
 body.board-sidebar-open .board-sidebar-backdrop { display: block; }
 
 @media (max-width: 768px) {
-  .board-sidebar-toggle { display: flex; }
   .board-tools { left: 6px; }
-  .board-sidebar {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    width: 240px;
-    max-width: 80vw;
-    z-index: 7;
-    transform: translateX(-100%);
-    transition: transform .2s ease;
-    box-shadow: 2px 0 8px rgba(0,0,0,.12);
-  }
-  body.board-sidebar-open .board-sidebar { transform: translateX(0); }
 }
 
-/* Desktop (>768px): sidebar свёрнут в иконку, при наведении выдвигается. */
-@media (min-width: 769px) {
-  .board-sidebar {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    width: 44px;
-    z-index: 4;
-    transition: width .18s ease, box-shadow .18s ease;
-  }
-  .board-sidebar:hover {
-    width: 240px;
-    box-shadow: 2px 0 10px rgba(0,0,0,.14);
-  }
-  .board-sidebar::before {
-    content: "≡";
-    position: absolute;
-    top: 8px;
-    left: 12px;
-    width: 20px;
-    height: 28px;
-    font-size: 22px;
-    line-height: 28px;
-    color: var(--muted);
-    pointer-events: none;
-    transition: opacity .12s;
-    z-index: 1;
-  }
-  .board-sidebar:hover::before { opacity: 0; }
-  .board-sidebar > * {
-    min-width: 240px;
-    opacity: 0;
-    transition: opacity .12s;
-  }
-  .board-sidebar:hover > * { opacity: 1; }
-  /* Canvas — full width. Шторки лежат поверх (position: absolute,
-     прозрачный фон когда свёрнуты). Так padding-left/right не
-     создают «серые полоски» сбоку. */
-  .board-content { padding-left: 0; padding-right: 0; }
+/* Sidebar скрыт по умолчанию (translateX(-100%)); выезжает при
+   body.board-sidebar-open (клик на бургер #board-sidebar-toggle). */
+.board-sidebar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 240px;
+  max-width: 80vw;
+  z-index: 7;
+  transform: translateX(-100%);
+  transition: transform .2s ease;
+  box-shadow: 2px 0 8px rgba(0,0,0,.12);
 }
+body.board-sidebar-open .board-sidebar { transform: translateX(0); }
+
+/* Canvas — full width. Шторка лежит поверх (position:absolute). */
+.board-content { padding-left: 0; padding-right: 0; }
 
 /* ── Inspect-панель (правая) — раскрыта по умолчанию, можно свернуть. ── */
 .inspect-panel {

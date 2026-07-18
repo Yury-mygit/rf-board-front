@@ -254,6 +254,16 @@ function buildContextMenu() {
     if (ctxMenuTarget) zOrderChange(ctxMenuTarget, 'back');
   });
 
+  // BRD-5: Lock toggle.
+  const lockBtn = document.getElementById('ctx-lock-btn');
+  if (lockBtn) lockBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    if (!ctxMenuTarget) return;
+    const before = !!(ctxMenuTarget.attrs && ctxMenuTarget.attrs.locked);
+    commitAttrChange(ctxMenuTarget, { locked: before }, { locked: !before });
+    refreshContextUI();
+  });
+
   fillBtn.addEventListener('click', e => { e.stopPropagation(); togglePalette('fill'); });
   strokeBtn.addEventListener('click', e => { e.stopPropagation(); togglePalette('stroke'); });
   colorBtn.addEventListener('click', e => { e.stopPropagation(); togglePalette('color'); });
@@ -438,6 +448,17 @@ function togglePalette(prop) {
 function refreshContextUI() {
   if (!ctxMenuTarget) return;
   const a = ctxMenuTarget.attrs || {};
+  // BRD-5: подсветка кнопки Lock + смена tooltip.
+  const lockBtn = document.getElementById('ctx-lock-btn');
+  if (lockBtn) {
+    if (a.locked) {
+      lockBtn.classList.add('active');
+      lockBtn.title = 'Разблокировать (Ctrl+L)';
+    } else {
+      lockBtn.classList.remove('active');
+      lockBtn.title = 'Зафиксировать (Ctrl+L)';
+    }
+  }
   if (ctxMenuTarget.type === 'rect' || ctxMenuTarget.type === 'oval' || ctxMenuTarget.type === 'note') {
     const isNote = ctxMenuTarget.type === 'note';
     const defaultFill = isNote ? '#fff8c6' : DEFAULT_FILL;
@@ -1297,6 +1318,22 @@ function onBoardKeydown(e) {
       redoBoard();
       return;
     }
+    // BRD-5: Ctrl+L → toggle lock для выделения.
+    if (k === 'l' && !e.shiftKey) {
+      const sel = boardGetAllSelected();
+      if (sel.length) {
+        e.preventDefault();
+        if (isInputTarget) target.blur();
+        // Массовый toggle: если все locked → unlock all, иначе → lock all.
+        const allLocked = sel.every(r => !!(r.attrs && r.attrs.locked));
+        const newVal = !allLocked;
+        for (const rec of sel) {
+          const before = !!(rec.attrs && rec.attrs.locked);
+          if (before !== newVal) commitAttrChange(rec, { locked: before }, { locked: newVal });
+        }
+      }
+      return;
+    }
   }
 
   if (e.key === 'Escape') {
@@ -1441,7 +1478,8 @@ window.addEventListener('blur', closeNudgeSession);
 
 async function deleteBoardSelected() {
   if (!currentBoardId) return;
-  const all = boardGetAllSelected();
+  // BRD-5: locked элементы не удаляются (Backspace/Delete → no-op).
+  const all = boardGetAllSelected().filter(r => !(r.attrs && r.attrs.locked));
   if (!all.length) return;
   // Каскадом удаляем bpmn_flow'ы, привязанные к удаляемым shape'ам.
   const ids = all.map(r => r.id);
@@ -1615,22 +1653,93 @@ function subscribeBoardEvents(boardId) {
 async function loadBoards() {
   try {
     allBoards = await api.boards();
-    if (!allBoards.length) {
-      await createBoard('Доска 1');
-    } else {
-      const first = allBoards[0];
-      currentBoardId = first.id;
-      renderBoardsList();
-      const full = await api.board(first.id);
-      loadBoard(full.elements || []);
-      subscribeBoardEvents(first.id);
-      if (!restoreViewport(first.id)) boardFitView();
-      clearUndo();
-    }
+    renderBoardsList();
+    // Титульная модалка «Мои доски» вместо автооткрытия первой доски
+    // (аналог экрана «Мои команды» в task-трекере). Пользователь сам
+    // выбирает какую доску открыть.
+    openMyBoardsModal();
   } catch (e) {
     setStatus(`Не удалось загрузить доски: ${e.message}`, true);
   }
 }
+
+// ── Титульная модалка «Мои доски» ──────────────────────────────────
+function openMyBoardsModal() {
+  renderMyBoardsModal();
+  const modal = document.getElementById('my-boards-modal');
+  if (modal) modal.hidden = false;
+  document.body.classList.add('mb-open');
+}
+
+function closeMyBoardsModal() {
+  const modal = document.getElementById('my-boards-modal');
+  if (modal) modal.hidden = true;
+  document.body.classList.remove('mb-open');
+  const form = document.getElementById('mb-new-form');
+  const btn = document.getElementById('mb-new-btn');
+  if (form) form.hidden = true;
+  if (btn) btn.hidden = false;
+}
+
+function renderMyBoardsModal() {
+  const list = document.getElementById('mb-list');
+  if (!list) return;
+  if (!allBoards.length) {
+    list.innerHTML = '<div class="mb-empty">Досок пока нет. Создайте первую.</div>';
+    return;
+  }
+  list.innerHTML = allBoards.map(b => {
+    const badge = _boardBadge(b);
+    return `
+      <div class="mb-item" data-bid="${escapeHtmlBoard(b.id)}">
+        <span class="mb-title">${escapeHtmlBoard(b.title || 'Без названия')}</span>
+        ${badge ? `<span class="mb-badge ${badge.cls}" title="${escapeHtmlBoard(badge.title)}">${escapeHtmlBoard(badge.label)}</span>` : ''}
+      </div>
+    `;
+  }).join('');
+  list.querySelectorAll('.mb-item').forEach(el => {
+    el.addEventListener('click', async () => {
+      const id = el.dataset.bid;
+      closeMyBoardsModal();
+      await openBoard(id);
+    });
+  });
+}
+
+function initMyBoardsModal() {
+  const closeBtn = document.getElementById('mb-close');
+  if (closeBtn) closeBtn.addEventListener('click', closeMyBoardsModal);
+  const backdrop = document.querySelector('#my-boards-modal .mb-backdrop');
+  if (backdrop) backdrop.addEventListener('click', closeMyBoardsModal);
+  const openBtn = document.getElementById('my-boards-btn');
+  if (openBtn) openBtn.addEventListener('click', openMyBoardsModal);
+
+  const newBtn = document.getElementById('mb-new-btn');
+  const newForm = document.getElementById('mb-new-form');
+  const newInput = document.getElementById('mb-new-title');
+  const newCancel = document.getElementById('mb-new-cancel');
+  if (newBtn && newForm && newInput && newCancel) {
+    newBtn.addEventListener('click', () => {
+      newBtn.hidden = true;
+      newForm.hidden = false;
+      newInput.value = `Доска ${allBoards.length + 1}`;
+      newInput.focus();
+      newInput.select();
+    });
+    newCancel.addEventListener('click', () => {
+      newForm.hidden = true;
+      newBtn.hidden = false;
+    });
+    newForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const title = (newInput.value || '').trim();
+      if (!title) return;
+      await createBoard(title);
+      closeMyBoardsModal();
+    });
+  }
+}
+initMyBoardsModal();
 
 let openSwipedWrap = null;
 
@@ -1743,7 +1852,7 @@ function renderBoardsList() {
       if (item.dataset.swipeHandled === '1') { delete item.dataset.swipeHandled; return; }
       if (wrap.classList.contains('swiped')) { closeSwipedWrap(); return; }
       if (openSwipedWrap) { closeSwipedWrap(); return; }
-      openBoard(b.id); closeSidebar();
+      openBoard(b.id);
     });
     item.addEventListener('dblclick', e => {
       if (b.id !== currentBoardId) return;
@@ -1756,6 +1865,7 @@ function renderBoardsList() {
     wrap.appendChild(item);
     list.appendChild(wrap);
   }
+  updateBoardTitleHeader();
 }
 
 function escapeHtmlBoard(s) {
@@ -1916,6 +2026,7 @@ async function openBoard(id) {
   if (currentBoardId === id) return;
   currentBoardId = id;
   renderBoardsList();
+  updateBoardTitleHeader();
   try {
     const full = await api.board(id);
     loadBoard(full.elements || []);
@@ -1926,6 +2037,21 @@ async function openBoard(id) {
     setStatus(`Ошибка загрузки доски: ${e.message}`, true);
     clearBoard();
   }
+}
+
+// Заголовок текущей доски: обновляем document.title и постим tools-title
+// в parent — если board открыт в iframe (raftforge.art/tools), landing-обёртка
+// заменит title плавающего окна. Внутренний header доски своего заголовка
+// не показывает (был дублем с window-frame'ом).
+function updateBoardTitleHeader() {
+  const b = _currentBoard();
+  const title = (b && b.title) || 'Доска';
+  document.title = `LiveNotes — ${title}`;
+  try {
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ type: 'tools-title', title }, '*');
+    }
+  } catch (_) { /* cross-origin — молча */ }
 }
 
 async function createBoard(title) {
@@ -1939,6 +2065,9 @@ async function createBoard(title) {
     clearBoard();
     clearUndo();
     renderBoardsList();
+    updateBoardTitleHeader();
+    subscribeBoardEvents(id);
+    boardFitView();
   } catch (e) {
     setStatus(`Ошибка создания доски: ${e.message}`, true);
   }
