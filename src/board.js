@@ -711,9 +711,8 @@ function _patchInPlace(rec, e) {
     }
   });
   applyElementAttrs(rec);
-  // BRD-20: если элемент выделен — handle-рамка следует за ним при SSE-updates
-  // (undo/redo от server'а, drag от других юзеров и т.п.).
-  if (selectedIds.has(rec.id)) refreshHandlesIfVisible();
+  // BRD-20 hotfix убран — BRD-21 δ' переехал refreshHandlesIfVisible внутрь
+  // _animateNode, где handles получают .live-transition и анимируются синхронно.
 }
 
 // Рекурсивно двигает всех потомков frame'а на (dx, dy) — и DOM, и state.
@@ -759,15 +758,27 @@ function _translateNode(node, dx, dy) {
 
 // Добавляет класс .live-transition на 320ms — CSS-анимация x/y/width/height.
 // Без этого класса (например drag-move) переходы выключены.
+// BRD-21 (δ'): если handles видны — они тоже получают .live-transition и
+// обновляются immediately, анимируясь ту же 280ms transition, что и shape.
+// Handles остаются в глобальном handlesG (Miro invariant «handles always on top»).
 function _animateNode(node, mutate) {
   if (!node) { mutate(); return; }
   node.classList.add('live-transition');
   // Дочерние ноды (group → rect, foreignObject) тоже должны анимироваться.
   node.querySelectorAll && node.querySelectorAll('rect, foreignObject, image').forEach(n => n.classList.add('live-transition'));
+  const handlesVisible = handlesG && handlesG.style.display !== 'none';
+  if (handlesVisible) {
+    handlesG.querySelectorAll('.resize-handle').forEach(n => n.classList.add('live-transition'));
+  }
   mutate();
+  // Handles rects обновятся сразу на новые x/y/w/h — анимируются вместе с shape.
+  if (handlesVisible) refreshHandlesIfVisible();
   setTimeout(() => {
     node.classList.remove('live-transition');
     node.querySelectorAll && node.querySelectorAll('rect, foreignObject, image').forEach(n => n.classList.remove('live-transition'));
+    if (handlesG) {
+      handlesG.querySelectorAll('.resize-handle').forEach(n => n.classList.remove('live-transition'));
+    }
   }, 320);
 }
 

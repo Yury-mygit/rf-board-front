@@ -464,6 +464,11 @@ body.mb-open main { display: none; }
   stroke: var(--accent);
   stroke-width: 4;
 }
+/* BRD-21: image — atomic <image> без stroke, selection через SVG outline. */
+.board-shape.selected[data-type="image"] {
+  outline: 3px solid var(--accent);
+  outline-offset: 0;
+}
 .board-shape[data-type="frame"] > rect:nth-child(2) {
   transition: stroke .1s, stroke-width .1s;
 }
