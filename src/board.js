@@ -1448,6 +1448,9 @@ function onUp(e) {
     const x2 = Math.max(rubber.startX, p.x);
     const y2 = Math.max(rubber.startY, p.y);
     const hits = elements.filter(el => {
+      // BRD-5: locked элементы не попадают в massовое выделение (Miro-style).
+      // Single-click по locked всё ещё выделяет — чтобы можно было unlock через ctx-toolbar.
+      if (isLocked(el)) return false;
       const b = bboxOf(el);
       if (el.type === 'frame') {
         // Фрейм — только если полностью внутри rubber-rect (Miro-style).
