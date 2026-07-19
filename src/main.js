@@ -1371,9 +1371,14 @@ function closeNudgeSession() {
         (before.parentId || null) === (after.parentId || null)
       ) continue;
       items.push({ id, before, after });
-      flushElementSave(rec);
     }
-    if (items.length) pushUndo({ kind: 'move', items });
+    // BRD-25: multi-element nudge = один batch composite; single = обычный save.
+    if (items.length === 1) {
+      const rec = boardGetElementById(items[0].id);
+      if (rec) flushElementSave(rec);
+    } else if (items.length > 1) {
+      flushMoveBatch(items);
+    }
   } finally {
     _closingNudge = false;
   }
@@ -1526,6 +1531,40 @@ async function zOrderChange(rec, where) {
     });
   } catch (e) {
     setStatus(`Ошибка z-order: ${e.message}`, true);
+  }
+}
+
+// BRD-25: multi-element move commit — один batch composite action.
+// Cancel'ит pending per-element debounce'ы и шлёт один POST /elements/batch
+// с N items. Симптом до fix'а: drag 2+ элементов → 2+ scheduleElementSave →
+// 2+ single-item batch'ей → 2+ composite'ов → 2+ Ctrl+Z для отката.
+async function flushMoveBatch(items) {
+  if (!currentBoardId || !items || items.length < 2) return;
+  const boardId = currentBoardId;
+  const batchItems = [];
+  for (const it of items) {
+    const rec = boardGetElementById(it.id);
+    if (!rec) continue;
+    // Отменяем pending per-element debounce — batch делает финальный save.
+    clearTimeout(elementSaveTimers.get(rec.id));
+    elementSaveTimers.delete(rec.id);
+    batchItems.push({
+      id: rec.id,
+      op: 'patch',
+      patch: {
+        ...recToApiGeometry(rec),
+        parentId: rec.parentId || null,
+      },
+    });
+  }
+  if (!batchItems.length) return;
+  try {
+    await apiFetch(`/boards/${boardId}/elements/batch`, {
+      method: 'POST',
+      body: JSON.stringify({ items: batchItems }),
+    });
+  } catch (e) {
+    setStatus(`Ошибка сохранения группы: ${e.message}`, true);
   }
 }
 
@@ -2163,7 +2202,7 @@ initBoard(document.getElementById('board-canvas'), {
   onElementChanged: (rec) => { scheduleElementSave(rec); renderInspectPanel(); },
   onCopyLink: openCopyMenu,
   onSelectionChanged: onBoardSelectionChanged,
-  onMoveCommit: items => pushUndo({ kind: 'move', items }),
+  onMoveCommit: flushMoveBatch,
   onResizeCommit: op => pushUndo({ kind: 'resize', ...op }),
   onTextCommit: (rec, key, before, after) => pushUndo({
     kind: 'attrs', id: rec.id,
