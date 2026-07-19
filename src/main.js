@@ -73,10 +73,24 @@ const api = {
     apiFetch(`/boards/${id}`, { method: 'DELETE' }),
   createElement: (boardId, body) =>
     apiFetch(`/boards/${boardId}/elements`, { method: 'POST', body: JSON.stringify(body) }).then(r => r.json()),
+  // BRD-24 D11: единая точка mutation'ов — batch endpoint. Frontend =
+  // «пульт», backend решает kind + composite undo. patchElement/deleteElement
+  // сохраняют старую сигнатуру (single-item), под капотом = batch с
+  // items=[one]. Legacy single PATCH/DELETE endpoints удалены в Stage 7.
   patchElement: (boardId, elementId, data) =>
-    apiFetch(`/boards/${boardId}/elements/${elementId}`, { method: 'PATCH', body: JSON.stringify(data) }).then(r => r.json()),
+    apiFetch(`/boards/${boardId}/elements/batch`, {
+      method: 'POST',
+      body: JSON.stringify({
+        items: [{ id: elementId, op: 'patch', patch: data }],
+      }),
+    }).then(r => r.json()),
   deleteElement: (boardId, elementId) =>
-    apiFetch(`/boards/${boardId}/elements/${elementId}`, { method: 'DELETE' }),
+    apiFetch(`/boards/${boardId}/elements/batch`, {
+      method: 'POST',
+      body: JSON.stringify({
+        items: [{ id: elementId, op: 'delete' }],
+      }),
+    }).then(r => r.json()),
   restoreElement: (boardId, elementId) =>
     apiFetch(`/boards/${boardId}/elements/${elementId}/restore`, { method: 'POST' }).then(r => r.json()),
   // BRD-20: Undo/Redo — server-side stack γ2 модели (BRD-13).
@@ -1565,6 +1579,28 @@ function subscribeBoardEvents(boardId) {
       }
     } else if (t === 'element_deleted') {
       if (payload.element_id) boardRemoveFromApi(payload.element_id);
+    } else if (t === 'elements_batch_patched') {
+      // BRD-24: bulk-event для batch mutation (patch + delete в одном
+      // composite action). Loop по items; каждый — либо {element: {...}}
+      // (upsert/patch) либо {element_id, deleted:true} (soft-delete).
+      // Legacy handlers выше (element_upserted / element_patched /
+      // element_deleted) остаются для single-target пути до его миграции
+      // в Stage 6.
+      const items = Array.isArray(payload.items) ? payload.items : [];
+      for (const it of items) {
+        if (it.deleted && it.element_id) {
+          boardRemoveFromApi(it.element_id);
+        } else if (it.element && it.element.board_id === boardId) {
+          const el = it.element;
+          boardUpsertFromApi({
+            id: el.id, type: el.type, parentId: el.parent_id,
+            x: el.x, y: el.y, w: el.w, h: el.h, attrs: el.attrs,
+            zIndex: el.z_index,
+            _cascadeDx: it.cascade_dx,
+            _cascadeDy: it.cascade_dy,
+          });
+        }
+      }
     }
     // BRD-20: server отправляет undo_state map — {user_uuid: {canUndo, canRedo, ...}}.
     // Клиент выбирает свой uuid и обновляет кнопки.
