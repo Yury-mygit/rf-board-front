@@ -229,12 +229,30 @@ function attachHandlers() {
       upperRowId = row.dataset.id;
       lowerRowId = idx < allRows.length - 1 ? allRows[idx + 1].dataset.id : null;
     }
-    const body_ = { op: 'between', cascadeFrame: true };
+    const body_ = { op: 'between' };
     if (upperRowId) body_.afterId = upperRowId;
     if (lowerRowId) body_.beforeId = lowerRowId;
+    // BRD-35: если target — frame, добавляем всех descendants в
+    // elementIds (backend hidden cascade убран, caller responsibility).
+    const allEls = _state.getElements();
+    const target = allEls.find(e => e.id === targetId);
+    if (target && target.type === 'frame') {
+      const descendants = [];
+      const collect = (pid) => {
+        for (const el of allEls) {
+          if (el.parentId === pid) {
+            descendants.push(el.id);
+            if (el.type === 'frame') collect(el.id);
+          }
+        }
+      };
+      collect(targetId);
+      if (descendants.length) {
+        body_.elementIds = [targetId, ...descendants];
+      }
+    }
     try {
       await apiZOrder(targetId, body_);
-      // SSE echo сделает refresh автоматически.
     } catch (err) {
       console.error('layer-panel: drop failed', err);
     }

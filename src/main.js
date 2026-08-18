@@ -1698,13 +1698,10 @@ function subscribeBoardEvents(boardId) {
       if (payload.element && payload.element.board_id === boardId) {
         const el = payload.element;
         // snake_case → camelCase для совместимости с board.js.
-        // cascade_dx/dy — frame двинулся, фронт сам сдвинет потомков.
         boardUpsertFromApi({
           id: el.id, type: el.type, parentId: el.parent_id,
           x: el.x, y: el.y, w: el.w, h: el.h, attrs: el.attrs,
           zIndex: el.z_index, z_rank: el.z_rank,
-          _cascadeDx: el.cascade_dx,
-          _cascadeDy: el.cascade_dy,
         });
       }
     } else if (t === 'element_deleted') {
@@ -1725,9 +1722,7 @@ function subscribeBoardEvents(boardId) {
           boardUpsertFromApi({
             id: el.id, type: el.type, parentId: el.parent_id,
             x: el.x, y: el.y, w: el.w, h: el.h, attrs: el.attrs,
-            zIndex: el.z_index,
-            _cascadeDx: it.cascade_dx,
-            _cascadeDy: it.cascade_dy,
+            zIndex: el.z_index, z_rank: el.z_rank,
           });
         }
       }

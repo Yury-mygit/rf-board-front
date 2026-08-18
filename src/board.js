@@ -729,19 +729,9 @@ function _patchInPlace(rec, e) {
     if (zChanged) _placeNodeByZIndex(rec);
   }
   if (e.z_rank !== undefined) rec.z_rank = e.z_rank;
-  // Cascade: если backend сказал что frame двинулся на (cascade_dx, cascade_dy),
-  // фронт translate'ит всех потомков. НО: если frame у нас уже на
-  // (e.x, e.y) — значит юзер сам drag'ом двинул и frame, и детей
-  // (drag-move в move-handler двигает children тоже), и cascade приведёт
-  // к УДВОЕНИЮ. Echo-suppression: применяем cascade только если frame
-  // ещё не на новых координатах.
-  if ((e._cascadeDx || e._cascadeDy) && rec.type === 'frame') {
-    const frameDx = e.x - rec.x;
-    const frameDy = e.y - rec.y;
-    if (Math.abs(frameDx) > 0.5 || Math.abs(frameDy) > 0.5) {
-      _cascadeMoveChildren(rec.id, e._cascadeDx || 0, e._cascadeDy || 0);
-    }
-  }
+  // BRD-35: backend больше не отправляет cascade_dx/cascade_dy. Frontend
+  // не двигает children сам при frame patch — backend теперь шлёт
+  // отдельные items для каждого child'а в elements_batch_patched.
   // Универсальный подход: сдвиг через (dx, dy) translate всех внутренних
   // координатных атрибутов. Работает для frame/rect/text/note/image/line —
   // не нужно знать внутреннюю структуру с offset'ами.
@@ -778,24 +768,9 @@ function _patchInPlace(rec, e) {
   // _animateNode, где handles получают .live-transition и анимируются синхронно.
 }
 
-// Рекурсивно двигает всех потомков frame'а на (dx, dy) — и DOM, и state.
-// Все mutations в одном tick'е → CSS-transition стартует синхронно у всех.
-// applyGeo диспатчит по типу — каждый shape знает как себя перерисовать
-// корректно (sub-элементы c4_person/bpmn_event через applyC4ShapeGeo /
-// applyBpmnShapeGeo, ре-routing relationships через recomputeFlows
-// внутри applyGeo). Старый `_translateNode` не покрывает <circle>/<path>.
-function _cascadeMoveChildren(frameId, dx, dy) {
-  for (const el of elements) {
-    if (el.parentId !== frameId) continue;
-    if (el.type === 'line') {
-      el.x1 += dx; el.y1 += dy; el.x2 += dx; el.y2 += dy;
-    } else {
-      el.x += dx; el.y += dy;
-    }
-    _animateNode(el.node, () => applyGeo(el));
-    if (el.type === 'frame') _cascadeMoveChildren(el.id, dx, dy);
-  }
-}
+// BRD-35: `_cascadeMoveChildren` удалён. Backend больше не отправляет
+// cascade_dx/cascade_dy в SSE payload; каждый child приходит как отдельный
+// item в `elements_batch_patched` и рендерится через `boardUpsertFromApi`.
 
 // Сдвигает все координатные атрибуты внутри ноды на (dx, dy). Работает
 // для любой SVG-структуры: проходит по <rect>, <image>, <foreignObject>,
