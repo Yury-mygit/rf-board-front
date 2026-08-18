@@ -38,6 +38,44 @@ async function loadSettings() {
   return _settingsModule;
 }
 
+// BRD-30: layer-panel.js — dynamic import (модуль тянется только при
+// первом open'е).
+let _layerPanelModule = null;
+async function loadLayerPanel() {
+  if (_layerPanelModule) return _layerPanelModule;
+  _layerPanelModule = await import('./layer-panel.js');
+  return _layerPanelModule;
+}
+
+async function toggleLayerPanel() {
+  const mod = await loadLayerPanel();
+  if (mod.isOpen()) {
+    mod.closeLayerPanel();
+    return;
+  }
+  mod.openLayerPanel({
+    getElements: () => boardGetAllElements().map(rec => ({
+      id: rec.id, type: rec.type, parentId: rec.parentId,
+      attrs: rec.attrs, z_rank: rec.z_rank,
+    })),
+    selectedIds: new Set(boardGetAllSelected().map(r => r.id)),
+    onSelectId: (id) => {
+      boardSetSelection([id]);
+      refreshLayerPanel();
+    },
+    apiZOrder: (targetId, body) => {
+      if (!currentBoardId) return Promise.resolve();
+      return api.zOrderElement(currentBoardId, targetId, body);
+    },
+  });
+}
+
+function refreshLayerPanel() {
+  if (_layerPanelModule && _layerPanelModule.isOpen()) {
+    _layerPanelModule.refresh(new Set(boardGetAllSelected().map(r => r.id)));
+  }
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 // crypto.randomUUID() requires a secure context (HTTPS) — fall back to v4 via getRandomValues.
@@ -1317,6 +1355,14 @@ function onBoardKeydown(e) {
     return;
   }
 
+  // BRD-30: Ctrl+Shift+L — toggle layer panel.
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'L' || e.key === 'l')
+      && !isInputTarget) {
+    e.preventDefault();
+    toggleLayerPanel();
+    return;
+  }
+
   if (e.key === 'Escape') {
     if (inBoardEdit) {
       boardExitEdit();
@@ -1650,7 +1696,7 @@ function subscribeBoardEvents(boardId) {
         boardUpsertFromApi({
           id: el.id, type: el.type, parentId: el.parent_id,
           x: el.x, y: el.y, w: el.w, h: el.h, attrs: el.attrs,
-          zIndex: el.z_index,
+          zIndex: el.z_index, z_rank: el.z_rank,
           _cascadeDx: el.cascade_dx,
           _cascadeDy: el.cascade_dy,
         });
@@ -1685,6 +1731,8 @@ function subscribeBoardEvents(boardId) {
     if (payload.undo_state && myUuid && payload.undo_state[myUuid]) {
       applyUndoState(payload.undo_state[myUuid]);
     }
+    // BRD-30: если layer panel открыт — перерисовать после любого update.
+    refreshLayerPanel();
     // board_patched / board_created / board_deleted — пока не обрабатываем
     // (UI-список досок остаётся ручным).
   };
@@ -1791,6 +1839,12 @@ initMyBoardsModal();
   if (undoBtn) undoBtn.addEventListener('click', undoBoard);
   if (redoBtn) redoBtn.addEventListener('click', redoBoard);
   applyUndoState(undoState);  // initial disabled visual
+})();
+
+// BRD-30: кнопка «Слои» в top-bar.
+(function initLayersButton() {
+  const btn = document.getElementById('layers-btn');
+  if (btn) btn.addEventListener('click', toggleLayerPanel);
 })();
 
 let openSwipedWrap = null;

@@ -5,5 +5,12 @@
     "backward": "Send Backward",
     "back": "Send to Back",
     "error": "Z-order error: {msg}"
+  },
+  "layers": {
+    "title": "Layers",
+    "empty": "No elements",
+    "toggle_hint": "Layers (Ctrl+Shift+L)",
+    "cross_parent_warning": "Element from another container — may visually overlap siblings",
+    "error": "Layer panel error: {msg}"
   }
 }

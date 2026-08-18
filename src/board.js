@@ -710,6 +710,7 @@ function _patchInPlace(rec, e) {
     rec.z_index = e.zIndex;
     if (zChanged) _placeNodeByZIndex(rec);
   }
+  if (e.z_rank !== undefined) rec.z_rank = e.z_rank;
   // Cascade: если backend сказал что frame двинулся на (cascade_dx, cascade_dy),
   // фронт translate'ит всех потомков. НО: если frame у нас уже на
   // (e.x, e.y) — значит юзер сам drag'ом двинул и frame, и детей
@@ -841,6 +842,10 @@ function renderFromApi(e) {
   if (e.zIndex !== undefined) {
     const rec = elements.find(el => el.id === e.id);
     if (rec) rec.z_index = e.zIndex;
+  }
+  if (e.z_rank !== undefined) {
+    const rec = elements.find(el => el.id === e.id);
+    if (rec) rec.z_rank = e.z_rank;
   }
 }
 

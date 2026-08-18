@@ -12,6 +12,7 @@
       <button id="my-boards-btn" class="my-boards-btn" title="Мои доски">📋 Мои доски</button>
       <button id="undo-btn" class="topbar-btn undo-btn" title="Отменить (Ctrl+Z)" disabled>↺</button>
       <button id="redo-btn" class="topbar-btn redo-btn" title="Вернуть (Ctrl+Y)" disabled>↻</button>
+      <button id="layers-btn" class="topbar-btn layers-btn" title="Слои (Ctrl+Shift+L)">☰ Слои</button>
       <span id="status"></span>
     </header>
     <!-- Титульная модалка «Мои доски» (аналог экрана Мои команды в task-трекере). -->
@@ -243,6 +244,16 @@
           </button>
           <div class="ip-body">
             <div class="ip-empty">Выделите элемент, чтобы увидеть его свойства.</div>
+          </div>
+        </aside>
+        <!-- BRD-30: Layer panel (dockable справа, toggle кнопкой «Слои» в topbar). -->
+        <aside id="layers-panel" class="layers-panel" aria-label="Слои" hidden>
+          <div class="lp-head">
+            <h3 class="lp-title">Слои</h3>
+            <button id="lp-close" class="lp-close" aria-label="Закрыть панель слоёв">×</button>
+          </div>
+          <div id="lp-body" class="lp-body">
+            <div class="lp-empty">Нет элементов</div>
           </div>
         </aside>
       </section>
