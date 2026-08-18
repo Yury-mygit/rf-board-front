@@ -1281,6 +1281,15 @@ async function pasteImageFromClipboard(file) {
 // используется clipboard copy для paste-flow.
 
 function commitAttrChange(rec, before, after) {
+  // BRD-27: если target rec — в multi-selection, применяем attrs
+  // ко всем selected одним batch call'ом → 1 composite action, 1 Ctrl+Z.
+  const selected = boardGetAllSelected();
+  const selIds = new Set(selected.map(r => r.id));
+  if (selIds.has(rec.id) && selected.length > 1) {
+    const targets = selected.filter(r => !(r.attrs && r.attrs.locked));
+    _commitAttrsMulti(targets, after);
+    return;
+  }
   rec.attrs = rec.attrs || {};
   for (const [k, v] of Object.entries(after)) {
     if (v === undefined) delete rec.attrs[k];
@@ -1290,6 +1299,38 @@ function commitAttrChange(rec, before, after) {
   scheduleElementSave(rec);
   renderInspectPanel();
   pushUndo({ kind: 'attrs', id: rec.id, before, after });
+}
+
+// BRD-27: multi-target attrs change — один batch, composite action.
+async function _commitAttrsMulti(recs, attrsPatch) {
+  if (!currentBoardId || !recs.length) return;
+  const items = [];
+  for (const r of recs) {
+    // Local apply — immediate UI response.
+    r.attrs = r.attrs || {};
+    for (const [k, v] of Object.entries(attrsPatch)) {
+      if (v === undefined) delete r.attrs[k];
+      else r.attrs[k] = v;
+    }
+    applyElementAttrs(r);
+    // Cancel pending debounce timer — batch делает финальный save.
+    clearTimeout(elementSaveTimers.get(r.id));
+    elementSaveTimers.delete(r.id);
+    items.push({
+      id: r.id,
+      op: 'patch',
+      patch: { attrs: { ...r.attrs } },
+    });
+  }
+  renderInspectPanel();
+  try {
+    await apiFetch(`/boards/${currentBoardId}/elements/batch`, {
+      method: 'POST',
+      body: JSON.stringify({ items }),
+    });
+  } catch (e) {
+    setStatus(`Ошибка сохранения атрибутов: ${e.message}`, true);
+  }
 }
 
 // ── Board keyboard (Esc / Del / Backspace / Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y) ───
@@ -1516,10 +1557,18 @@ async function deleteBoardSelected() {
   // Каскадом удаляем bpmn_flow'ы, привязанные к удаляемым shape'ам.
   const ids = all.map(r => r.id);
   const attachedFlows = boardGetFlowsTouchingAny(ids).filter(f => !ids.includes(f.id));
-  const snapshots = [...all, ...attachedFlows].map(snapshotRec);
+  const allIds = [...ids, ...attachedFlows.map(f => f.id)];
+  // BRD-26: один batch delete → один composite action → один Ctrl+Z
+  // восстанавливает все. Backend snapshot per-item для undo restore.
+  const items = allIds.map(id => ({ id, op: 'delete' }));
   try {
-    await eraseElements(snapshots.map(s => s.id));
-    pushUndo({ kind: 'delete', records: snapshots });
+    await apiFetch(`/boards/${currentBoardId}/elements/batch`, {
+      method: 'POST',
+      body: JSON.stringify({ items }),
+    });
+    // Local cleanup — SSE echo тоже сделает removeFromApi, но immediate
+    // остаётся responsive UI.
+    boardRemoveElements(allIds);
   } catch (err) {
     setStatus(`Ошибка удаления элемента: ${err.message}`, true);
   }
