@@ -21,8 +21,11 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 
 // BRD-31: snap alignment (Miro-style). Threshold в screen px, деля
 // на viewport.zoom для перехода в canvas world coords.
-import { computeSnap } from './snap.js';
-const SNAP_THRESHOLD_SCREEN = 6;
+import { computeSnap, computeResizeSnap } from './snap.js';
+// Edge snap (L/R/T/B) — 4 screen px; center (CX-CX, CY-CY) — 2 px
+// (менее липко: центрирование — менее очевидное намерение).
+const SNAP_EDGE_SCREEN = 4;
+const SNAP_CENTER_SCREEN = 2;
 let _altPressed = false;
 window.addEventListener('keydown', (e) => { if (e.key === 'Alt') _altPressed = true; });
 window.addEventListener('keyup', (e) => { if (e.key === 'Alt') _altPressed = false; });
@@ -1437,6 +1440,35 @@ function onMove(e) {
         }
       }
     }
+    // BRD-31 Stage 4: snap для resize. Только affected edges (по handle).
+    if (!_altPressed) {
+      const active = [];
+      if (r.handle.includes('w')) active.push('left');
+      if (r.handle.includes('e')) active.push('right');
+      if (r.handle.includes('n')) active.push('top');
+      if (r.handle.includes('s')) active.push('bottom');
+      if (active.length) {
+        const zoom = viewport.zoom || 1;
+        const thresholdWorld = SNAP_EDGE_SCREEN / zoom;
+        const neighbors = elements
+          .filter(el => el.id !== r.el.id
+              && el.type !== 'line'
+              && el.type !== 'bpmn_flow'
+              && el.type !== 'c4_relationship')
+          .map(el => ({ x: el.x, y: el.y, w: el.w, h: el.h }));
+        const rs = computeResizeSnap({ x: nx, y: ny, w: nw, h: nh }, active, neighbors, thresholdWorld);
+        // Apply: изменить nx/ny/nw/nh по snap-delta для each edge.
+        if (rs.snapLeft !== undefined)   { nx += rs.snapLeft;  nw -= rs.snapLeft; }
+        if (rs.snapRight !== undefined)  { nw += rs.snapRight; }
+        if (rs.snapTop !== undefined)    { ny += rs.snapTop;   nh -= rs.snapTop; }
+        if (rs.snapBottom !== undefined) { nh += rs.snapBottom; }
+        renderSnapGuides(rs.guides);
+      } else {
+        renderSnapGuides([]);
+      }
+    } else {
+      renderSnapGuides([]);
+    }
     r.el.x = nx; r.el.y = ny; r.el.w = nw; r.el.h = nh;
     if (isBpmnShape(r.el.type)) {
       applyBpmnShapeGeo(r.el.node, r.el.type, nx, ny, nw, nh);
@@ -1515,8 +1547,11 @@ function onMove(e) {
               && el.type !== 'bpmn_flow'
               && el.type !== 'c4_relationship')
           .map(el => ({ x: el.x, y: el.y, w: el.w, h: el.h }));
-        const thresholdWorld = SNAP_THRESHOLD_SCREEN / (viewport.zoom || 1);
-        const snap = computeSnap(bbox, neighbors, thresholdWorld);
+        const zoom = viewport.zoom || 1;
+        const snap = computeSnap(bbox, neighbors, {
+          edge: SNAP_EDGE_SCREEN / zoom,
+          center: SNAP_CENTER_SCREEN / zoom,
+        });
         if (snap.dx || snap.dy) {
           for (const id of movingIds) {
             const el = elements.find(e => e.id === id);
@@ -1588,6 +1623,7 @@ function onUp(e) {
     const before = resize.before;
     const childParentsBefore = resize.childParentsBefore;
     resize = null;
+    renderSnapGuides([]);  // BRD-31: cleanup guides on resize end
     if (target.type === 'frame') recomputeChildrenAfterResize(target);
     // Note: ручной resize выключает autoFit (пользователь выразил намерение
     // задать размер сам). Иначе на следующий input высота схлопнется.
