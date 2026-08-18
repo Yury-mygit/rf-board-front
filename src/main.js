@@ -1,4 +1,5 @@
 import { initBoard, setBoardCursor, loadBoard, clearBoard, applyElementAttrs, deselect as boardDeselect, removeElements as boardRemoveElements, exitEdit as boardExitEdit, getAllSelected as boardGetAllSelected, getSelectedCount as boardGetSelectedCount, addFromApi as boardAddFromApi, upsertFromApi as boardUpsertFromApi, removeFromApi as boardRemoveFromApi, getAllElements as boardGetAllElements, setElementGeo as boardSetElementGeo, setElementParent as boardSetElementParent, getElementById as boardGetElementById, getChildrenOf as boardGetChildrenOf, setSelection as boardSetSelection, zoomIn as boardZoomIn, zoomOut as boardZoomOut, fitView as boardFitView, setViewport as boardSetViewport, worldToScreen as boardWorldToScreen, isEditing as boardIsEditing, getFlowsTouchingAny as boardGetFlowsTouchingAny, placeImage as boardPlaceImage, getCanvasCenterWorld as boardGetCanvasCenterWorld, readImageFile as boardReadImageFile, nudgeSelection as boardNudgeSelection, panViewportByScreen as boardPanViewportByScreen, snapshotGeo as boardSnapshotGeo, recomputeParentIdAfterNudge as boardRecomputeParentIdAfterNudge, recomputeNoteAutoFitHeight as boardRecomputeNoteAutoFitHeight, bringNodeToFrontInLayer as boardBringNodeToFront, bringNodeToBackInLayer as boardBringNodeToBack } from './board.js';
+import { t as i18n } from './i18n.js';
 import { assetUrl, mediaUpload } from './media.js';
 // settings.js подгружается динамически (см. loadSettings ниже) — модуль
 // нужен только при клике на «Настройки»/«Поделиться» и только у юзеров
@@ -100,6 +101,14 @@ const api = {
     apiFetch(`/boards/${boardId}/redo`, { method: 'POST' }).then(r => r.json()),
   undoState: (boardId) =>
     apiFetch(`/boards/${boardId}/undo/state`).then(r => r.json()),
+  // BRD-6: server-authoritative z-order. body = {op, elementIds?: [uuid]}
+  // (camelCase → backend Pydantic alias маппит на snake). URL id — anchor
+  // (для routing/permission); если elementIds задан, backend использует его.
+  zOrderElement: (boardId, elementId, body) =>
+    apiFetch(`/boards/${boardId}/elements/${elementId}/z-order`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }).then(r => r.json()),
 };
 
 // ── Status ────────────────────────────────────────────────────────────────────
@@ -263,17 +272,39 @@ function buildContextMenu() {
 
   document.getElementById('board-context-menu').addEventListener('mousedown', e => e.stopPropagation());
 
-  // ── Z-order кнопки (общие для всех типов) ──
+  // ── Z-order кнопки (общие для всех типов) — BRD-6: 4 op'а, i18n titles ──
   const frontBtn = document.getElementById('ctx-to-front-btn');
+  const forwardBtn = document.getElementById('ctx-forward-btn');
+  const backwardBtn = document.getElementById('ctx-backward-btn');
   const backBtn = document.getElementById('ctx-to-back-btn');
-  if (frontBtn) frontBtn.addEventListener('click', e => {
-    e.stopPropagation();
-    if (ctxMenuTarget) zOrderChange(ctxMenuTarget, 'front');
-  });
-  if (backBtn) backBtn.addEventListener('click', e => {
-    e.stopPropagation();
-    if (ctxMenuTarget) zOrderChange(ctxMenuTarget, 'back');
-  });
+  if (frontBtn) {
+    frontBtn.title = i18n('zorder.front');
+    frontBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      zOrderStep('front', ctxMenuZOrderTargets());
+    });
+  }
+  if (forwardBtn) {
+    forwardBtn.title = i18n('zorder.forward');
+    forwardBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      zOrderStep('forward', ctxMenuZOrderTargets());
+    });
+  }
+  if (backwardBtn) {
+    backwardBtn.title = i18n('zorder.backward');
+    backwardBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      zOrderStep('backward', ctxMenuZOrderTargets());
+    });
+  }
+  if (backBtn) {
+    backBtn.title = i18n('zorder.back');
+    backBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      zOrderStep('back', ctxMenuZOrderTargets());
+    });
+  }
 
   // BRD-5: Lock toggle.
   const lockBtn = document.getElementById('ctx-lock-btn');
@@ -1275,6 +1306,17 @@ function onBoardKeydown(e) {
     }
   }
 
+  // BRD-6: z-order hotkeys. PgUp/PgDn = ±1 layer, Shift = to Front/Back.
+  if ((e.key === 'PageUp' || e.key === 'PageDown') && !inBoardEdit && !isInputTarget) {
+    const sel = boardGetAllSelected();
+    if (!sel.length) return;
+    e.preventDefault();
+    const isUp = e.key === 'PageUp';
+    const op = e.shiftKey ? (isUp ? 'front' : 'back') : (isUp ? 'forward' : 'backward');
+    zOrderStep(op, sel.map(r => r.id));
+    return;
+  }
+
   if (e.key === 'Escape') {
     if (inBoardEdit) {
       boardExitEdit();
@@ -1505,33 +1547,30 @@ function scheduleElementSave(rec) {
   }, 1000));
 }
 
-// Изменить z-order одного элемента: front → выше всех, back → ниже всех.
-// PATCH z_index, DOM перенесён сразу (appendChild / insertBefore) — анимации
-// нет, эффект мгновенный (SSE echo придёт с тем же z_index, no-op).
-async function zOrderChange(rec, where) {
-  if (!currentBoardId) return;
+// BRD-6: server-authoritative z-order. Client — «пульт» (§thin_client): шлёт
+// op + selection, backend вычисляет новые z_indices (advisory-locked), пишет
+// z_order/composite action, broadcasts element_patched per element. DOM-reorder
+// на клиенте — через SSE echo → boardUpsertFromApi → BRD-22 reorderNodeByZ.
+async function zOrderStep(op, elementIds) {
+  if (!currentBoardId || !elementIds || elementIds.length === 0) return;
   const boardId = currentBoardId;
-  const all = boardGetAllElements();
-  let newZ;
-  if (where === 'front') {
-    newZ = Math.max(...all.map(e => e.z_index || 0)) + 1;
-  } else {
-    newZ = Math.min(...all.map(e => e.z_index || 0)) - 1;
-  }
-  rec.z_index = newZ;
-  // BRD-16: DOM-reorder в пределах layer-content (не svg-root), чтобы grid и overlay не смещались.
-  if (rec.node) {
-    if (where === 'front') boardBringNodeToFront(rec.node);
-    else boardBringNodeToBack(rec.node);
-  }
+  const anchor = elementIds[0];
+  const body = { op };
+  if (elementIds.length > 1) body.elementIds = elementIds;
   try {
-    await api.patchElement(boardId, rec.id, {
-      zIndex: newZ,
-      updatedAt: Date.now(),
-    });
+    await api.zOrderElement(boardId, anchor, body);
   } catch (e) {
-    setStatus(`Ошибка z-order: ${e.message}`, true);
+    setStatus(i18n('zorder.error', { msg: e.message }), true);
   }
+}
+
+// Multi-select-aware выбор target'ов для context-menu z-order кнопок:
+// если выделено >1 — используем всю выборку (BRD-6 D8), иначе — ctxMenuTarget.
+function ctxMenuZOrderTargets() {
+  const sel = boardGetAllSelected();
+  if (sel.length > 1) return sel.map(r => r.id);
+  if (ctxMenuTarget) return [ctxMenuTarget.id];
+  return [];
 }
 
 // BRD-25: multi-element move commit — один batch composite action.

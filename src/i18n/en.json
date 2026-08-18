@@ -1,0 +1,9 @@
+{
+  "zorder": {
+    "front": "Bring to Front",
+    "forward": "Bring Forward",
+    "backward": "Send Backward",
+    "back": "Send to Back",
+    "error": "Z-order error: {msg}"
+  }
+}
