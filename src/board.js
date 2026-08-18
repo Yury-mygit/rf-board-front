@@ -741,6 +741,8 @@ function _patchInPlace(rec, e) {
   const newY = rec.type === 'line' ? e.y : e.y;
   const dx = newX - oldX;
   const dy = newY - oldY;
+  const dw = (e.w !== undefined ? e.w : rec.w) - rec.w;
+  const dh = (e.h !== undefined ? e.h : rec.h) - rec.h;
   if (rec.type === 'line') {
     rec.x1 = e.x; rec.y1 = e.y; rec.x2 = e.x + e.w; rec.y2 = e.y + e.h;
   } else {
@@ -748,21 +750,28 @@ function _patchInPlace(rec, e) {
     if (e.w !== undefined) rec.w = e.w;
     if (e.h !== undefined) rec.h = e.h;
   }
-  _animateNode(rec.node, () => {
+  // BRD-35: если DOM уже на нужной позиции (own drag echo: frontend
+  // moveBy уже поставил всех), _animateNode wraps лишний CSS-transition
+  // класс на 320ms — визуально frame и children триггерят transitions
+  // штучно с микро-lag'ом. Skip animation если нет реального изменения.
+  const dxAbs = Math.abs(dx), dyAbs = Math.abs(dy);
+  const dwAbs = Math.abs(dw), dhAbs = Math.abs(dh);
+  const EPS = 0.5;
+  const hasVisualChange = dxAbs > EPS || dyAbs > EPS || dwAbs > EPS || dhAbs > EPS;
+  const mutate = () => {
     if (dx || dy) _translateNode(rec.node, dx, dy);
-    // отдельно width/height для frame/rect/note — могут меняться без move
     if (rec.type === 'rect' || rec.type === 'oval' || rec.type === 'frame' || rec.type === 'note') {
-      // setRectAttrs принимает абсолютные x/y/w/h — для resize.
-      // При только move (dx,dy) — уже сделано translate'ом, w/h не менялись.
-      // setRectAttrs мы вызываем ТОЛЬКО если w/h изменились.
-      // Здесь проверка пропущена ради простоты: setRectAttrs повторно
-      // выставит x/y (то же значение, что и после translate) — idempotent.
       setRectAttrs(rec.node, rec.x, rec.y, rec.w, rec.h);
     } else if (rec.type === 'image') {
       rec.node.setAttribute('width', rec.w);
       rec.node.setAttribute('height', rec.h);
     }
-  });
+  };
+  if (hasVisualChange) {
+    _animateNode(rec.node, mutate);
+  } else {
+    mutate();
+  }
   applyElementAttrs(rec);
   // BRD-20 hotfix убран — BRD-21 δ' переехал refreshHandlesIfVisible внутрь
   // _animateNode, где handles получают .live-transition и анимируются синхронно.
