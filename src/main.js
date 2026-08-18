@@ -1,4 +1,4 @@
-import { initBoard, setBoardCursor, loadBoard, clearBoard, applyElementAttrs, deselect as boardDeselect, removeElements as boardRemoveElements, exitEdit as boardExitEdit, getAllSelected as boardGetAllSelected, getSelectedCount as boardGetSelectedCount, addFromApi as boardAddFromApi, upsertFromApi as boardUpsertFromApi, removeFromApi as boardRemoveFromApi, getAllElements as boardGetAllElements, setElementGeo as boardSetElementGeo, setElementParent as boardSetElementParent, getElementById as boardGetElementById, getChildrenOf as boardGetChildrenOf, setSelection as boardSetSelection, zoomIn as boardZoomIn, zoomOut as boardZoomOut, fitView as boardFitView, setViewport as boardSetViewport, worldToScreen as boardWorldToScreen, isEditing as boardIsEditing, getFlowsTouchingAny as boardGetFlowsTouchingAny, placeImage as boardPlaceImage, getCanvasCenterWorld as boardGetCanvasCenterWorld, readImageFile as boardReadImageFile, nudgeSelection as boardNudgeSelection, panViewportByScreen as boardPanViewportByScreen, snapshotGeo as boardSnapshotGeo, recomputeParentIdAfterNudge as boardRecomputeParentIdAfterNudge, recomputeNoteAutoFitHeight as boardRecomputeNoteAutoFitHeight, bringNodeToFrontInLayer as boardBringNodeToFront, bringNodeToBackInLayer as boardBringNodeToBack } from './board.js';
+import { initBoard, setBoardCursor, loadBoard, clearBoard, applyElementAttrs, deselect as boardDeselect, removeElements as boardRemoveElements, exitEdit as boardExitEdit, getAllSelected as boardGetAllSelected, getSelectedCount as boardGetSelectedCount, addFromApi as boardAddFromApi, upsertFromApi as boardUpsertFromApi, removeFromApi as boardRemoveFromApi, getAllElements as boardGetAllElements, setElementGeo as boardSetElementGeo, setElementParent as boardSetElementParent, getElementById as boardGetElementById, getChildrenOf as boardGetChildrenOf, setSelection as boardSetSelection, zoomIn as boardZoomIn, zoomOut as boardZoomOut, fitView as boardFitView, setViewport as boardSetViewport, worldToScreen as boardWorldToScreen, isEditing as boardIsEditing, getFlowsTouchingAny as boardGetFlowsTouchingAny, placeImage as boardPlaceImage, getCanvasCenterWorld as boardGetCanvasCenterWorld, readImageFile as boardReadImageFile, nudgeSelection as boardNudgeSelection, panViewportByScreen as boardPanViewportByScreen, snapshotGeo as boardSnapshotGeo, recomputeParentIdAfterNudge as boardRecomputeParentIdAfterNudge, recomputeNoteAutoFitHeight as boardRecomputeNoteAutoFitHeight, bringNodeToFrontInLayer as boardBringNodeToFront, bringNodeToBackInLayer as boardBringNodeToBack, applyBatchWithFlip as boardApplyBatchWithFlip } from './board.js';
 import { t as i18n } from './i18n.js';
 import { assetUrl, mediaUpload } from './media.js';
 // settings.js подгружается динамически (см. loadSettings ниже) — модуль
@@ -1714,21 +1714,33 @@ function subscribeBoardEvents(boardId) {
       // element_deleted) остаются для single-target пути до его миграции
       // в Stage 6.
       const items = Array.isArray(payload.items) ? payload.items : [];
-      // BRD-35: instant без CSS transition — иначе frame и children
-      // триггерят transitions штучно с per-node timing, что визуально
-      // как «rope-pulling» (frame едет вперёд, дети догоняют).
+      // BRD-35: batch echo → синхронно + анимированно через FLIP + WAAPI.
+      // 1) Deletes обрабатываем отдельно (без animation).
+      // 2) Upserts existing elements — собираем в batch с ref на rec,
+      //    передаём в boardApplyBatchWithFlip (First snapshot → apply →
+      //    Play через rAF).
+      // 3) Upserts новых elements (create через SSE — редко) — обычный
+      //    boardUpsertFromApi (rendered fresh, animation не нужна).
+      const flipBatch = [];
       for (const it of items) {
         if (it.deleted && it.element_id) {
           boardRemoveFromApi(it.element_id);
         } else if (it.element && it.element.board_id === boardId) {
           const el = it.element;
-          boardUpsertFromApi({
+          const payload = {
             id: el.id, type: el.type, parentId: el.parent_id,
             x: el.x, y: el.y, w: el.w, h: el.h, attrs: el.attrs,
             zIndex: el.z_index, z_rank: el.z_rank,
-          }, { instant: true });
+          };
+          const existing = boardGetElementById(el.id);
+          if (existing) {
+            flipBatch.push({ rec: existing, e: payload });
+          } else {
+            boardUpsertFromApi(payload);
+          }
         }
       }
+      if (flipBatch.length) boardApplyBatchWithFlip(flipBatch);
     }
     // BRD-20: server отправляет undo_state map — {user_uuid: {canUndo, canRedo, ...}}.
     // Клиент выбирает свой uuid и обновляет кнопки.

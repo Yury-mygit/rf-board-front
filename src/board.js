@@ -609,6 +609,80 @@ function refreshHandlesIfVisible() {
   if (sel && (sel.type === 'frame' || sel.type === 'rect' || sel.type === 'oval' || sel.type === 'image' || sel.type === 'note' || sel.type === 'text' || isBpmnShape(sel.type) || isC4Shape(sel.type))) updateHandles(sel);
 }
 
+// BRD-35: batch echo (undo/redo/multi-item mutation) animated
+// синхронно через FLIP + Web Animations API.
+//
+// Стандартная техника (Framer Motion / Angular / React Aria):
+// 1. First: snapshot bboxes перед mutation.
+// 2. Last: apply mutations (elements прыгают на target position).
+// 3. Invert: transform: translate(-dx, -dy) — визуально в first pos.
+// 4. Play: rAF → transform: none + WAAPI animate → все anims стартуют
+//    ровно в одном moment (unlike CSS transitions на per-element
+//    property change).
+//
+// items: [{rec, e}] где rec — существующий board element, e — echo
+// payload (camelCase-ish).
+export function applyBatchWithFlip(items, duration = 280) {
+  if (!items || !items.length) return;
+  // Phase 1: snapshot текущих визуальных bbox'ов.
+  const snapshots = new Map();
+  for (const { rec } of items) {
+    if (rec && rec.node) {
+      snapshots.set(rec.id, rec.node.getBoundingClientRect());
+    }
+  }
+  // Snapshot handles bbox если видны — animate их вместе.
+  let handlesSnapshot = null;
+  if (handlesG && handlesG.style.display !== 'none') {
+    handlesSnapshot = new Map();
+    for (const h of handlesG.querySelectorAll('.resize-handle')) {
+      handlesSnapshot.set(h.dataset.handle, h.getBoundingClientRect());
+    }
+  }
+  // Phase 2: apply state + DOM mutations — instant, без CSS transition.
+  for (const { rec, e } of items) {
+    _patchInPlace(rec, e, { instant: true });
+  }
+  refreshHandlesIfVisible();
+
+  // Phase 3+4: rAF → compute deltas → animate transform все синхронно.
+  requestAnimationFrame(() => {
+    for (const { rec } of items) {
+      if (!rec || !rec.node) continue;
+      const oldBox = snapshots.get(rec.id);
+      if (!oldBox) continue;
+      const newBox = rec.node.getBoundingClientRect();
+      const dx = oldBox.left - newBox.left;
+      const dy = oldBox.top - newBox.top;
+      if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) continue;
+      rec.node.animate(
+        [
+          { transform: `translate(${dx}px, ${dy}px)` },
+          { transform: 'translate(0, 0)' },
+        ],
+        { duration, easing: 'ease' },
+      );
+    }
+    if (handlesSnapshot) {
+      for (const h of handlesG.querySelectorAll('.resize-handle')) {
+        const oldBox = handlesSnapshot.get(h.dataset.handle);
+        if (!oldBox) continue;
+        const newBox = h.getBoundingClientRect();
+        const dx = oldBox.left - newBox.left;
+        const dy = oldBox.top - newBox.top;
+        if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) continue;
+        h.animate(
+          [
+            { transform: `translate(${dx}px, ${dy}px)` },
+            { transform: 'translate(0, 0)' },
+          ],
+          { duration, easing: 'ease' },
+        );
+      }
+    }
+  });
+}
+
 export function setBoardCursor(tool) {
   refreshCursor();
 }
