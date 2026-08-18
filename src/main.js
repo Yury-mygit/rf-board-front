@@ -1624,7 +1624,13 @@ function ctxMenuZOrderTargets() {
 // с N items. Симптом до fix'а: drag 2+ элементов → 2+ scheduleElementSave →
 // 2+ single-item batch'ей → 2+ composite'ов → 2+ Ctrl+Z для отката.
 async function flushMoveBatch(items) {
-  if (!currentBoardId || !items || items.length < 2) return;
+  // BRD-34 fix: раньше `< 2 → return` — single-drag save шёл через
+  // debounce (1000ms) в `scheduleElementSave`. Второй drag того же
+  // элемента за <1s отменял pending timer и ставил новый с итоговой
+  // позицией → в PATCH попадал diff before=pos1 → after=pos3, position 2
+  // терялась (Ctrl+Z сразу возвращал в pos1). Fix: length ≥ 1 → immediate
+  // batch send, cancel debounce timers, каждый drag = своё action.
+  if (!currentBoardId || !items || items.length < 1) return;
   const boardId = currentBoardId;
   const batchItems = [];
   for (const it of items) {
