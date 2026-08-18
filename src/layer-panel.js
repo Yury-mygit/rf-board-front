@@ -207,28 +207,35 @@ function attachHandlers() {
     body.querySelectorAll('.lp-drop-line').forEach(el => el.remove());
     if (!row || row.dataset.id === dragSrc) return;
     const targetId = dragSrc;
-    const anchorId = row.dataset.id;
     const rect = row.getBoundingClientRect();
     const midY = rect.top + rect.height / 2;
     const above = e.clientY < midY;
-    // Note: tree render sorts z_rank ASC (bottom → top). "above" в UI =
-    // ниже по z_rank (визуально сзади). Значит:
-    //   above: target уходит ПОД anchor → beforeId=anchor.
-    //   below: target уходит НАД anchor → afterId=anchor.
-    // Wait — но UI показывает top-level bottom→top? Actually z_rank ASC =
-    // bottom to top visually (min rank = самый нижний слой). Tree renders
-    // ascending, значит top of list = lowest z. User dragging "above" в
-    // визуальном списке (выше в UI) = target получит меньший z_rank.
-    // → target идёт ПОД anchor → beforeId=anchor (rank < anchor.rank).
-    const body_ = above
-      ? { op: 'between', beforeId: anchorId }
-      : { op: 'between', afterId: anchorId };
-    body_.cascadeFrame = true;
+    // Drop-line попадает между двумя row'ами. Собираем оба соседа —
+    // upperRow (в UI выше drop-line = min z_rank; backend afterId),
+    // lowerRow (в UI ниже = max z_rank; backend beforeId).
+    // Sort ASC значит top of list = lowest z_rank = визуально сзади.
+    // Исключаем сам target из соседей (иначе round-trip).
+    const allRows = Array.from(body.querySelectorAll('.lp-row'))
+      .filter(r => r.dataset.id !== targetId);
+    const idx = allRows.indexOf(row);
+    let upperRowId = null;
+    let lowerRowId = null;
+    if (above) {
+      // Drop-line над row → между (allRows[idx-1]) и row.
+      upperRowId = idx > 0 ? allRows[idx - 1].dataset.id : null;
+      lowerRowId = row.dataset.id;
+    } else {
+      // Drop-line под row → между row и (allRows[idx+1]).
+      upperRowId = row.dataset.id;
+      lowerRowId = idx < allRows.length - 1 ? allRows[idx + 1].dataset.id : null;
+    }
+    const body_ = { op: 'between', cascadeFrame: true };
+    if (upperRowId) body_.afterId = upperRowId;
+    if (lowerRowId) body_.beforeId = lowerRowId;
     try {
       await apiZOrder(targetId, body_);
       // SSE echo сделает refresh автоматически.
     } catch (err) {
-      // Cross-parent warning не блокирует — backend уже применил, но покажем.
       console.error('layer-panel: drop failed', err);
     }
   });
