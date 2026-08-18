@@ -22,7 +22,7 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 // BRD-31: snap alignment (Miro-style). Threshold в screen px, деля
 // на viewport.zoom для перехода в canvas world coords.
 import { computeSnap } from './snap.js';
-const SNAP_THRESHOLD_SCREEN = 12;
+const SNAP_THRESHOLD_SCREEN = 6;
 let _altPressed = false;
 window.addEventListener('keydown', (e) => { if (e.key === 'Alt') _altPressed = true; });
 window.addEventListener('keyup', (e) => { if (e.key === 'Alt') _altPressed = false; });
