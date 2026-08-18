@@ -1714,6 +1714,9 @@ function subscribeBoardEvents(boardId) {
       // element_deleted) остаются для single-target пути до его миграции
       // в Stage 6.
       const items = Array.isArray(payload.items) ? payload.items : [];
+      // BRD-35: instant без CSS transition — иначе frame и children
+      // триггерят transitions штучно с per-node timing, что визуально
+      // как «rope-pulling» (frame едет вперёд, дети догоняют).
       for (const it of items) {
         if (it.deleted && it.element_id) {
           boardRemoveFromApi(it.element_id);
@@ -1723,7 +1726,7 @@ function subscribeBoardEvents(boardId) {
             id: el.id, type: el.type, parentId: el.parent_id,
             x: el.x, y: el.y, w: el.w, h: el.h, attrs: el.attrs,
             zIndex: el.z_index, z_rank: el.z_rank,
-          });
+          }, { instant: true });
         }
       }
     }

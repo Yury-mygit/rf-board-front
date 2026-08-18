@@ -700,7 +700,7 @@ export function removeFromApi(id) {
 // Upsert: для существующих элементов делаем in-place patch с CSS-transition
 // (через class .live-transition), новые рендерим как обычно. In-place
 // сохраняет DOM-ноду — браузер анимирует x/y/width/height attributes.
-export function upsertFromApi(e) {
+export function upsertFromApi(e, opts) {
   if (!e || !e.id) return;
   const existing = elements.find(el => el.id === e.id);
   if (!existing) {
@@ -712,10 +712,10 @@ export function upsertFromApi(e) {
     if (rec) _placeNodeByZIndex(rec);
     return;
   }
-  _patchInPlace(existing, e);
+  _patchInPlace(existing, e, opts);
 }
 
-function _patchInPlace(rec, e) {
+function _patchInPlace(rec, e, opts) {
   const attrs = e.attrs || {};
   rec.attrs = attrs;
   rec.parentId = e.parentId || null;
@@ -767,7 +767,12 @@ function _patchInPlace(rec, e) {
       rec.node.setAttribute('height', rec.h);
     }
   };
-  if (hasVisualChange) {
+  // BRD-35: batch echo (undo/redo/multi-item update) — instant без
+  // CSS transition. Иначе frame и children триггерят transitions
+  // штучно с per-node timing (rope-pulling effect). Single-item
+  // legacy echoes (other user moves single element) продолжают
+  // анимироваться для smooth multi-user UX.
+  if (hasVisualChange && !(opts && opts.instant)) {
     _animateNode(rec.node, mutate);
   } else {
     mutate();
