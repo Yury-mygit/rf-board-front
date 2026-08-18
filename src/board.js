@@ -1500,12 +1500,16 @@ function onMove(e) {
     return;
   }
   if (move) {
-    const dx = p.x - move.lastX;
-    const dy = p.y - move.lastY;
+    // BRD-31 fix: absolute-position placement (не incremental) — иначе
+    // snap корректировка каждый frame возвращает элемент назад,
+    // «удерживая» пока курсор в threshold. Absolute: raw position =
+    // before + cumulative cursor delta; snap adjusts на top; element
+    // placed at raw + snap. Курсор ушёл >threshold — snap исчезает.
+    const totalDx = p.x - move.startX;
+    const totalDy = p.y - move.startY;
     move.lastX = p.x;
     move.lastY = p.y;
     const isGroupDrag = selectedIds.has(move.el.id) && selectedIds.size > 1;
-    // BRD-31: собрать set moving IDs (используется snap чтобы исключить их из neighbors).
     const movingIds = new Set();
     if (isGroupDrag) {
       for (const sel of getAllSelected()) {
@@ -1514,33 +1518,38 @@ function onMove(e) {
           for (const child of childrenOf(sel.id)) movingIds.add(child.id);
         }
       }
-      for (const id of movingIds) {
-        const el = elements.find(e => e.id === id);
-        if (!el) continue;
-        moveBy(el, dx, dy);
-        onElementChanged(el);
-      }
-      setFrameTarget(null); // containment отключён для group drag
     } else {
       movingIds.add(move.el.id);
       if (move.el.type === 'frame') {
         for (const child of childrenOf(move.el.id)) movingIds.add(child.id);
       }
-      moveBy(move.el, dx, dy);
-      onElementChanged(move.el);
-      if (move.el.type === 'frame') {
-        for (const child of childrenOf(move.el.id)) {
-          moveBy(child, dx, dy);
-          onElementChanged(child);
-        }
-      } else {
-        setFrameTarget(frameContaining(move.el));
+    }
+    // ensure `before` snapshots для всех movingIds (могут добавиться
+    // при cascade если frame получил нового child'а — редко).
+    for (const id of movingIds) {
+      if (!move.before.has(id)) {
+        const el = elements.find(e => e.id === id);
+        if (el) move.before.set(id, snapshotGeoLocal(el));
       }
     }
-    // BRD-31: snap correction на новом union bbox moving-группы.
+    // Compute snap на raw union bbox (позиция без snap correction).
+    let snapDx = 0, snapDy = 0, snapGuides = [];
     if (!_altPressed) {
-      const bbox = _unionBboxByIds(movingIds);
-      if (bbox) {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      let any = false;
+      for (const id of movingIds) {
+        const b = move.before.get(id);
+        const el = elements.find(e => e.id === id);
+        if (!b || !el) continue;
+        if (el.type === 'line' || el.type === 'bpmn_flow' || el.type === 'c4_relationship') continue;
+        const rx = b.x + totalDx;
+        const ry = b.y + totalDy;
+        minX = Math.min(minX, rx); minY = Math.min(minY, ry);
+        maxX = Math.max(maxX, rx + b.w); maxY = Math.max(maxY, ry + b.h);
+        any = true;
+      }
+      if (any) {
+        const bbox = { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
         const neighbors = elements
           .filter(el => !movingIds.has(el.id)
               && el.type !== 'line'
@@ -1552,17 +1561,29 @@ function onMove(e) {
           edge: SNAP_EDGE_SCREEN / zoom,
           center: SNAP_CENTER_SCREEN / zoom,
         });
-        if (snap.dx || snap.dy) {
-          for (const id of movingIds) {
-            const el = elements.find(e => e.id === id);
-            if (el) { moveBy(el, snap.dx, snap.dy); onElementChanged(el); }
-          }
-        }
-        renderSnapGuides(snap.guides);
+        snapDx = snap.dx; snapDy = snap.dy; snapGuides = snap.guides;
       }
-    } else {
-      renderSnapGuides([]);  // Alt pressed — clean guides
     }
+    // Place each moving element at raw + snap (absolute).
+    for (const id of movingIds) {
+      const el = elements.find(e => e.id === id);
+      const b = move.before.get(id);
+      if (!el || !b) continue;
+      const targetX = b.x + totalDx + snapDx;
+      const targetY = b.y + totalDy + snapDy;
+      const dx = targetX - (el.type === 'line' ? el.x1 : el.x);
+      const dy = targetY - (el.type === 'line' ? el.y1 : el.y);
+      if (dx !== 0 || dy !== 0) {
+        moveBy(el, dx, dy);
+        onElementChanged(el);
+      }
+    }
+    if (isGroupDrag) {
+      setFrameTarget(null);
+    } else if (move.el.type !== 'frame') {
+      setFrameTarget(frameContaining(move.el));
+    }
+    renderSnapGuides(snapGuides);
     if (getOnlySelected() === move.el) {
       if (move.el.type === 'frame' || move.el.type === 'rect' || move.el.type === 'oval' || move.el.type === 'image' || move.el.type === 'note' || move.el.type === 'text' || isBpmnShape(move.el.type) || isC4Shape(move.el.type)) updateHandles(move.el);
       onSelectionChanged(move.el, bboxOf(move.el));
