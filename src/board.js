@@ -19,6 +19,16 @@ import { assetUrl, mediaUpload } from './media.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
+// BRD-31: snap alignment (Miro-style). Threshold в screen px, деля
+// на viewport.zoom для перехода в canvas world coords.
+import { computeSnap } from './snap.js';
+const SNAP_THRESHOLD_SCREEN = 12;
+let _altPressed = false;
+window.addEventListener('keydown', (e) => { if (e.key === 'Alt') _altPressed = true; });
+window.addEventListener('keyup', (e) => { if (e.key === 'Alt') _altPressed = false; });
+window.addEventListener('blur', () => { _altPressed = false; });
+let _snapGuidesG = null;
+
 let svg = null;
 // Viewport в мировых координатах: (vx, vy) — левый-верхний угол видимого
 // окна, zoom — увеличение (1 = 1px экрана = 1 единица мира). Координаты
@@ -250,6 +260,11 @@ export function initBoard(container, opts = {}) {
 
   handlesG = createHandles();
   layerOverlay.appendChild(handlesG);
+
+  // BRD-31: group для snap guide lines. Cleanup при dragend.
+  _snapGuidesG = document.createElementNS(SVG_NS, 'g');
+  _snapGuidesG.classList.add('layer-snap-guides');
+  layerOverlay.appendChild(_snapGuidesG);
 
   applyViewBox();
   const ro = new ResizeObserver(() => applyViewBox());
@@ -1458,9 +1473,9 @@ function onMove(e) {
     move.lastX = p.x;
     move.lastY = p.y;
     const isGroupDrag = selectedIds.has(move.el.id) && selectedIds.size > 1;
+    // BRD-31: собрать set moving IDs (используется snap чтобы исключить их из neighbors).
+    const movingIds = new Set();
     if (isGroupDrag) {
-      // Все selected + дети-через-frame, без дублей.
-      const movingIds = new Set();
       for (const sel of getAllSelected()) {
         movingIds.add(sel.id);
         if (sel.type === 'frame') {
@@ -1475,6 +1490,10 @@ function onMove(e) {
       }
       setFrameTarget(null); // containment отключён для group drag
     } else {
+      movingIds.add(move.el.id);
+      if (move.el.type === 'frame') {
+        for (const child of childrenOf(move.el.id)) movingIds.add(child.id);
+      }
       moveBy(move.el, dx, dy);
       onElementChanged(move.el);
       if (move.el.type === 'frame') {
@@ -1485,6 +1504,29 @@ function onMove(e) {
       } else {
         setFrameTarget(frameContaining(move.el));
       }
+    }
+    // BRD-31: snap correction на новом union bbox moving-группы.
+    if (!_altPressed) {
+      const bbox = _unionBboxByIds(movingIds);
+      if (bbox) {
+        const neighbors = elements
+          .filter(el => !movingIds.has(el.id)
+              && el.type !== 'line'
+              && el.type !== 'bpmn_flow'
+              && el.type !== 'c4_relationship')
+          .map(el => ({ x: el.x, y: el.y, w: el.w, h: el.h }));
+        const thresholdWorld = SNAP_THRESHOLD_SCREEN / (viewport.zoom || 1);
+        const snap = computeSnap(bbox, neighbors, thresholdWorld);
+        if (snap.dx || snap.dy) {
+          for (const id of movingIds) {
+            const el = elements.find(e => e.id === id);
+            if (el) { moveBy(el, snap.dx, snap.dy); onElementChanged(el); }
+          }
+        }
+        renderSnapGuides(snap.guides);
+      }
+    } else {
+      renderSnapGuides([]);  // Alt pressed — clean guides
     }
     if (getOnlySelected() === move.el) {
       if (move.el.type === 'frame' || move.el.type === 'rect' || move.el.type === 'oval' || move.el.type === 'image' || move.el.type === 'note' || move.el.type === 'text' || isBpmnShape(move.el.type) || isC4Shape(move.el.type)) updateHandles(move.el);
@@ -1652,6 +1694,7 @@ function onUp(e) {
     const p = point(e);
     const moved = Math.abs(p.x - move.startX) >= 3 || Math.abs(p.y - move.startY) >= 3;
     move = null;
+    renderSnapGuides([]);  // BRD-31: cleanup guides on dragend
     // Click без shift на элемент из multi-selection без реального drag → свернуть к одному.
     if (!moved && wasInSelection && selectedIds.size > 1) {
       selectShape(el);
@@ -2021,6 +2064,45 @@ function applyShape(node, type, x1, y1, x2, y2) {
     return;
   }
   setRectAttrs(node, Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
+}
+
+// BRD-31: union bbox для набора id (снап на группу как целое).
+function _unionBboxByIds(ids) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  let any = false;
+  for (const id of ids) {
+    const el = elements.find(e => e.id === id);
+    if (!el || el.type === 'line' || el.type === 'bpmn_flow' || el.type === 'c4_relationship') continue;
+    any = true;
+    minX = Math.min(minX, el.x);
+    minY = Math.min(minY, el.y);
+    maxX = Math.max(maxX, el.x + el.w);
+    maxY = Math.max(maxY, el.y + el.h);
+  }
+  if (!any) return null;
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
+// BRD-31: рендер snap guide lines в overlay.
+function renderSnapGuides(guides) {
+  if (!_snapGuidesG) return;
+  _snapGuidesG.textContent = '';
+  for (const g of guides || []) {
+    const line = document.createElementNS(SVG_NS, 'line');
+    line.classList.add('board-snap-guide');
+    if (g.axis === 'x') {
+      line.setAttribute('x1', g.pos);
+      line.setAttribute('x2', g.pos);
+      line.setAttribute('y1', g.from);
+      line.setAttribute('y2', g.to);
+    } else {
+      line.setAttribute('y1', g.pos);
+      line.setAttribute('y2', g.pos);
+      line.setAttribute('x1', g.from);
+      line.setAttribute('x2', g.to);
+    }
+    _snapGuidesG.appendChild(line);
+  }
 }
 
 function moveBy(el, dx, dy) {
